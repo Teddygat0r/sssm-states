@@ -10,7 +10,7 @@ MODEL_NAME = "Qwen/Qwen3.5-4B"
 TARGET_LAYER_SUBSTR = "30"
 SAVE_EVERY = 5  # Set to 2 to save every other token, etc.
 TOP_N_SINGULAR_VALUES = 16
-MAX_NEW_TOKENS = 100
+MAX_NEW_TOKENS = 200
 EXPERIMENTS_ROOT = Path(__file__).parent / "experiments"
 
 PROMPT_SUITE = [
@@ -192,13 +192,18 @@ def main():
             s_energy, response, saved_states, deltas_shape = run_single_prompt(
                 prompt=prompt, model=model, tokenizer=tokenizer, target_modules=target_modules
             )
-            output_path = run_dir / f"{prompt_id}_s_energy.pt"
-            torch.save(s_energy.cpu(), output_path)
+            tensor_output_path = run_dir / f"{prompt_id}_s_energy.pt"
+            text_output_path = run_dir / f"{prompt_id}_prompt_response.txt"
+            torch.save(s_energy.cpu(), tensor_output_path)
+            text_output_path.write_text(
+                f"PROMPT:\n{prompt}\n\nRESPONSE:\n{response.strip()}\n",
+                encoding="utf-8",
+            )
             print(f"Saved recurrent states: {saved_states}")
             print(f"torch_deltas shape: {deltas_shape}")
             print(f"s_energy shape: {tuple(s_energy.shape)}")
             print(f"Response: {response.strip()}")
-            print(f"Saved file: {output_path.name}")
+            print(f"Saved files: {tensor_output_path.name}, {text_output_path.name}")
         except Exception as exc:
             print(f"Failed for {prompt_id}: {exc}")
 
