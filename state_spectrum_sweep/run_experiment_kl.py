@@ -76,17 +76,17 @@ def generate_delta(state, state_ref):
     raise TypeError(f"Unsupported state type for delta: {type(state)}")
 
 
-def low_rank_svd(tensor: torch.Tensor, n: int = 16) -> torch.Tensor:
-    u, s, v = torch.linalg.svd(tensor, full_matrices=False, driver='gesvdj')
-    u, s, v = u[..., :n], s[..., :n], v[..., :n, :]
-    return u @ torch.diag_embed(s) @ v
+# def low_rank_svd(tensor: torch.Tensor, n: int = 16) -> torch.Tensor:
+#     u, s, v = torch.linalg.svd(tensor, full_matrices=False, driver='gesvdj')
+#     u, s, v = u[..., :n], s[..., :n], v[..., :n, :]
+#     return u @ torch.diag_embed(s) @ v
 
-# def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
-#     # randomized/truncated SVD; much cheaper when n << min(m, n)
-#     q = min(n + oversample, min(tensor.shape[-2:]))
-#     u, s, v = torch.svd_lowrank(tensor, q=q, niter=niter)
-#     u, s, v = u[..., :n], s[..., :n], v[..., :n]
-#     return (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
+def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
+    # randomized/truncated SVD; much cheaper when n << min(m, n)
+    q = min(n + oversample, min(tensor.shape[-2:]))
+    u, s, v = torch.svd_lowrank(tensor, q=q, niter=niter)
+    u, s, v = u[..., :n], s[..., :n], v[..., :n]
+    return (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
 
 def low_rank_svd_list(lst: list, n: int = 16) -> list:
     batch = torch.stack(lst, dim=0)

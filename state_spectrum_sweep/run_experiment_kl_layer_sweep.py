@@ -80,11 +80,23 @@ def generate_delta_for_layer(
 #     return u @ torch.diag_embed(s) @ v
 
 def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
-    # randomized/truncated SVD; much cheaper when n << min(m, n)
-    q = min(n + oversample, min(tensor.shape[-2:]))
-    u, s, v = torch.svd_lowrank(tensor, q=q, niter=niter)
+    if tensor.dim() < 2:
+        raise ValueError(f"SVD expects tensor rank >= 2, got shape {tuple(tensor.shape)}")
+    orig_device = tensor.device
+    orig_dtype = tensor.dtype
+
+    cpu_tensor = tensor.detach().to(device="cpu", dtype=torch.float32)
+    q = min(n + oversample, min(cpu_tensor.shape[-2:]))
+    u, s, v = torch.svd_lowrank(cpu_tensor, q=q, niter=niter)
     u, s, v = u[..., :n], s[..., :n], v[..., :n]
-    return (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
+    approx_cpu = (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
+    return approx_cpu.to(device=orig_device, dtype=orig_dtype)
+
+
+def low_rank_svd_list(lst: list, n: int = 16) -> list:
+    batched_svd = torch.stack(lst, dim=0)
+    batched_svd = low_rank_svd(batched_svd, n=n)
+    return list(batched_svd.unbind(dim=0))
 
 def _resolve_eos_token_id(tokenizer, model) -> int | None:
     eos = getattr(tokenizer, "eos_token_id", None)
