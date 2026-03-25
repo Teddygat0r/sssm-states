@@ -1,8 +1,9 @@
 """
-Prompt-suite experiment: per-token KL divergence and MSE between original logits and
-logits from a low-rank approximation of recurrent-state deltas (see notebook flow).
+Prompt-suite experiment: per-token KL divergence and state metrics between original
+logits and logits from a low-rank approximation of recurrent-state deltas.
 
-Stops generation on EOS (tokenizer/model), with MAX_NEW_TOKENS as a safety cap.
+This variant compresses exactly one recurrent-state layer at a time, and loops the
+full prompt suite across all compressible layers.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ from time import perf_counter
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
 
 
 MODEL_NAME = "Qwen/Qwen3.5-4B"
@@ -62,37 +62,29 @@ PROMPT_SUITE = [
 ]
 
 
-def generate_delta(state, state_ref):
-    if isinstance(state, torch.Tensor):
-        return state - state_ref
-
-    if isinstance(state, list):
-        return [
-            state[i] - state_ref[i]
-            for i in range(len(state))
-            if state[i] is not None and state_ref[i] is not None
-        ]
-
-    raise TypeError(f"Unsupported state type for delta: {type(state)}")
+def generate_delta_for_layer(
+    state: list[torch.Tensor | None],
+    state_ref: list[torch.Tensor | None],
+    layer_idx: int,
+) -> torch.Tensor:
+    current = state[layer_idx]
+    ref = state_ref[layer_idx]
+    if current is None or ref is None:
+        raise ValueError(f"Layer {layer_idx} has None state; cannot compute delta.")
+    return current - ref
 
 
-def low_rank_svd(tensor: torch.Tensor, n: int = 16) -> torch.Tensor:
-    u, s, v = torch.linalg.svd(tensor, full_matrices=False, driver='gesvdj')
-    u, s, v = u[..., :n], s[..., :n], v[..., :n, :]
-    return u @ torch.diag_embed(s) @ v
+# def low_rank_svd(tensor: torch.Tensor, n: int = 16) -> torch.Tensor:
+#     u, s, v = torch.linalg.svd(tensor, full_matrices=False, driver="gesvdj")
+#     u, s, v = u[..., :n], s[..., :n], v[..., :n, :]
+#     return u @ torch.diag_embed(s) @ v
 
-# def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
-#     # randomized/truncated SVD; much cheaper when n << min(m, n)
-#     q = min(n + oversample, min(tensor.shape[-2:]))
-#     u, s, v = torch.svd_lowrank(tensor, q=q, niter=niter)
-#     u, s, v = u[..., :n], s[..., :n], v[..., :n]
-#     return (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
-
-def low_rank_svd_list(lst: list, n: int = 16) -> list:
-    batch = torch.stack(lst, dim=0)
-    batch = low_rank_svd(batch, n)
-    return list(batch.unbind(dim=0))
-
+def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
+    # randomized/truncated SVD; much cheaper when n << min(m, n)
+    q = min(n + oversample, min(tensor.shape[-2:]))
+    u, s, v = torch.svd_lowrank(tensor, q=q, niter=niter)
+    u, s, v = u[..., :n], s[..., :n], v[..., :n]
+    return (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
 
 def _resolve_eos_token_id(tokenizer, model) -> int | None:
     eos = getattr(tokenizer, "eos_token_id", None)
@@ -129,7 +121,7 @@ def _sample_next_token(
     cumulative_probs = torch.cumsum(topk_probs, dim=-1)
 
     remove_mask = cumulative_probs > top_p
-    remove_mask[..., 0] = False  # Keep at least one token.
+    remove_mask[..., 0] = False
     filtered_probs = topk_probs.masked_fill(remove_mask, 0.0)
     filtered_probs = filtered_probs / filtered_probs.sum(dim=-1, keepdim=True).clamp_min(1e-12)
 
@@ -138,21 +130,36 @@ def _sample_next_token(
     return next_token
 
 
-def run_single_prompt(
+def _discover_compressible_layers(model, tokenizer) -> list[int]:
+    probe_prompt = PROMPT_SUITE[0]
+    messages = [{"role": "user", "content": probe_prompt}]
+    text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    with torch.inference_mode():
+        out = model(
+            **model_inputs,
+            use_cache=True,
+            return_dict=True,
+        )
+    past_key_values = out.past_key_values
+    if past_key_values is None or getattr(past_key_values, "recurrent_states", None) is None:
+        raise ValueError(
+            "Model returned no recurrent_states in cache; expected Qwen3.5-style cache."
+        )
+    return [i for i, s in enumerate(past_key_values.recurrent_states) if s is not None]
+
+
+def run_single_prompt_layer(
     prompt: str,
     model,
     tokenizer,
     *,
+    target_layer: int,
     low_rank_n: int = LOW_RANK_RANK,
     max_new_tokens: int = MAX_NEW_TOKENS,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor], str, int, dict]:
-    """
-    Returns:
-        kl_per_step: float tensor [T]
-        metric tensors with shape [T, L] for:
-            mse, rel_frob, cosine_similarity, retained_energy
-        response text, prompt length in tokens, metadata dict
-    """
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
@@ -183,6 +190,14 @@ def run_single_prompt(
             raise ValueError(
                 "past_key_values has no recurrent_states; this script expects Qwen3.5-style cache."
             )
+        if target_layer < 0 or target_layer >= len(recurrent):
+            raise IndexError(
+                f"target_layer={target_layer} out of range for {len(recurrent)} recurrent states."
+            )
+        if recurrent[target_layer] is None:
+            raise ValueError(
+                f"target_layer={target_layer} is None in recurrent states; choose a valid layer."
+            )
 
         original_state = [
             s.detach().clone() if s is not None else None
@@ -195,20 +210,20 @@ def run_single_prompt(
             top_k=SAMPLING_TOP_K,
         )
 
-        # No generated tokens if first greedy token is already EOS
         if eos_token_id is not None and next_token.item() == eos_token_id:
             empty_kl = torch.tensor([], dtype=DTYPE, device="cpu")
             empty_metrics = {
-                "mse": torch.empty(0, 0, dtype=DTYPE, device="cpu"),
-                "rel_frob": torch.empty(0, 0, dtype=DTYPE, device="cpu"),
-                "cosine_similarity": torch.empty(0, 0, dtype=DTYPE, device="cpu"),
-                "retained_energy": torch.empty(0, 0, dtype=DTYPE, device="cpu"),
+                "mse": torch.empty(0, 1, dtype=DTYPE, device="cpu"),
+                "rel_frob": torch.empty(0, 1, dtype=DTYPE, device="cpu"),
+                "cosine_similarity": torch.empty(0, 1, dtype=DTYPE, device="cpu"),
+                "retained_energy": torch.empty(0, 1, dtype=DTYPE, device="cpu"),
             }
             meta = {
                 "prompt_len": prompt_len,
                 "num_generated_tokens": 0,
                 "num_metric_steps": 0,
                 "stopped_reason": "eos_first_token",
+                "target_layer": target_layer,
             }
             return empty_kl, empty_metrics, "", prompt_len, meta
 
@@ -227,60 +242,45 @@ def run_single_prompt(
                 [prompt_len + step], device=model.device, dtype=torch.long
             )
 
-            # After forward, cache is updated (same reference semantics as notebook).
-            deltas = generate_delta(
+            # Compute delta + SVD only for the selected target layer.
+            delta = generate_delta_for_layer(
                 past_key_values.recurrent_states,
                 original_state,
+                target_layer,
             )
             svd_start_time = perf_counter()
-            low_rank_deltas = low_rank_svd_list(deltas, n=low_rank_n)
+            low_rank_delta = low_rank_svd(delta, n=low_rank_n)
             svd_elapsed_s = perf_counter() - svd_start_time
-            print(f"    token {step + 1} low-rank svd: {svd_elapsed_s:.3f}s")
-
-            approximated_states = copy.deepcopy(past_key_values)
-            approximated_states.recurrent_states = []
-            mse_error: list[torch.Tensor] = []
-            rel_frob_error: list[torch.Tensor] = []
-            cosine_similarity_vals: list[torch.Tensor] = []
-            retained_energy_vals: list[torch.Tensor] = []
-            ssm_states = 0
-            for i in range(len(original_state)):
-                if original_state[i] is not None:
-                    approx_state = original_state[i] + low_rank_deltas[ssm_states]
-                    approximated_states.recurrent_states.append(approx_state)
-                    current_state = past_key_values.recurrent_states[i]
-                    mse_error.append(
-                        F.mse_loss(
-                            current_state,
-                            approx_state,
-                        )
-                    )
-                    err = current_state - approx_state
-                    current_norm = current_state.norm().clamp_min(1e-12)
-                    rel_frob_error.append(err.norm() / current_norm)
-                    cosine_similarity_vals.append(
-                        F.cosine_similarity(
-                            current_state.flatten(), approx_state.flatten(), dim=0
-                        )
-                    )
-                    retained_energy_vals.append(
-                        1.0 - (err.pow(2).sum() / current_state.pow(2).sum().clamp_min(1e-12))
-                    )
-                    ssm_states += 1
-                else:
-                    approximated_states.recurrent_states.append(None)
-
-            if not mse_error:
-                raise ValueError("No non-None recurrent states; cannot compute MSE.")
-
-            mse_rows.append(torch.stack(mse_error, dim=0).detach().float().cpu())
-            rel_frob_rows.append(torch.stack(rel_frob_error, dim=0).detach().float().cpu())
-            cosine_rows.append(torch.stack(cosine_similarity_vals, dim=0).detach().float().cpu())
-            retained_energy_rows.append(
-                torch.stack(retained_energy_vals, dim=0).detach().float().cpu()
+            print(
+                f"    token {step + 1} low-rank svd (layer {target_layer}): "
+                f"{svd_elapsed_s:.3f}s"
             )
 
-            forward_start_time = perf_counter()
+            approximated_states = copy.deepcopy(past_key_values)
+            approximated_states.recurrent_states = list(past_key_values.recurrent_states)
+            approx_state = original_state[target_layer] + low_rank_delta  # type: ignore[operator]
+            approximated_states.recurrent_states[target_layer] = approx_state
+            current_state = past_key_values.recurrent_states[target_layer]
+            if current_state is None:
+                raise ValueError(f"Unexpected None current_state for layer {target_layer}.")
+
+            mse = F.mse_loss(current_state, approx_state)
+            err = current_state - approx_state
+            current_norm = current_state.norm().clamp_min(1e-12)
+            rel_frob = err.norm() / current_norm
+            cosine_similarity = F.cosine_similarity(
+                current_state.flatten(), approx_state.flatten(), dim=0
+            )
+            retained_energy = 1.0 - (
+                err.pow(2).sum() / current_state.pow(2).sum().clamp_min(1e-12)
+            )
+
+            mse_rows.append(mse.view(1).detach().float().cpu())
+            rel_frob_rows.append(rel_frob.view(1).detach().float().cpu())
+            cosine_rows.append(cosine_similarity.view(1).detach().float().cpu())
+            retained_energy_rows.append(retained_energy.view(1).detach().float().cpu())
+
+            approx_forward_start_time = perf_counter()
             out = model(
                 input_ids=token_in,
                 past_key_values=past_key_values,
@@ -295,10 +295,10 @@ def run_single_prompt(
                 use_cache=True,
                 return_dict=True,
             )
-            forward_elapsed_s = perf_counter() - forward_start_time
+            approx_forward_elapsed_s = perf_counter() - approx_forward_start_time
             print(
-                f"    token {step + 1} model forwards: "
-                f"{forward_elapsed_s:.3f}s"
+                f"    token {step + 1} model forward (layer {target_layer}): "
+                f"{approx_forward_elapsed_s:.3f}s"
             )
 
             out_log_logits = torch.log_softmax(out.logits, dim=-1)
@@ -320,7 +320,7 @@ def run_single_prompt(
             past_key_values = out.past_key_values
             token_elapsed_s = perf_counter() - token_start_time
             print(
-                f"  token {step + 1} finished "
+                f"  token {step + 1} finished (layer {target_layer}) "
                 f"({token_elapsed_s:.3f}s)"
             )
             step += 1
@@ -335,10 +335,10 @@ def run_single_prompt(
     if not kl_list:
         kl_tensor = torch.tensor([], dtype=DTYPE)
         metric_tensors = {
-            "mse": torch.empty(0, 0, dtype=DTYPE),
-            "rel_frob": torch.empty(0, 0, dtype=DTYPE),
-            "cosine_similarity": torch.empty(0, 0, dtype=DTYPE),
-            "retained_energy": torch.empty(0, 0, dtype=DTYPE),
+            "mse": torch.empty(0, 1, dtype=DTYPE),
+            "rel_frob": torch.empty(0, 1, dtype=DTYPE),
+            "cosine_similarity": torch.empty(0, 1, dtype=DTYPE),
+            "retained_energy": torch.empty(0, 1, dtype=DTYPE),
         }
     else:
         kl_tensor = torch.tensor(kl_list, dtype=DTYPE)
@@ -355,6 +355,7 @@ def run_single_prompt(
         "num_metric_steps": len(kl_list),
         "stopped_reason": stopped_reason,
         "elapsed_seconds": perf_counter() - prompt_start_time,
+        "target_layer": target_layer,
     }
 
     return kl_tensor, metric_tensors, response.strip(), prompt_len, meta
@@ -366,6 +367,7 @@ def _summary_stats(kl: torch.Tensor, metrics: dict[str, torch.Tensor], meta: dic
         "num_generated_tokens": meta.get("num_generated_tokens"),
         "num_metric_steps": meta.get("num_metric_steps"),
         "stopped_reason": meta.get("stopped_reason"),
+        "target_layer": meta.get("target_layer"),
     }
     if kl.numel() == 0:
         out["kl"] = None
@@ -375,58 +377,42 @@ def _summary_stats(kl: torch.Tensor, metrics: dict[str, torch.Tensor], meta: dic
             "min": float(kl.min().item()),
             "max": float(kl.max().item()),
         }
+
     mse = metrics["mse"]
     rel_frob = metrics["rel_frob"]
     cosine_similarity = metrics["cosine_similarity"]
     retained_energy = metrics["retained_energy"]
-
     if mse.numel() == 0:
         out["mse"] = None
         out["relative_frobenius_error"] = None
         out["cosine_similarity"] = None
         out["retained_energy"] = None
-        out["per_layer"] = None
     else:
-        per_step_mean = mse.mean(dim=-1)
         out["mse"] = {
-            "mean_over_steps_and_layers": float(mse.mean().item()),
-            "mean_over_steps_of_layer_mean": float(per_step_mean.mean().item()),
-            "min_over_steps_of_layer_mean": float(per_step_mean.min().item()),
-            "max_over_steps_of_layer_mean": float(per_step_mean.max().item()),
+            "mean_over_steps": float(mse.mean().item()),
+            "min_over_steps": float(mse.min().item()),
+            "max_over_steps": float(mse.max().item()),
         }
         out["relative_frobenius_error"] = {
-            "mean_over_steps_and_layers": float(rel_frob.mean().item()),
-            "min": float(rel_frob.min().item()),
-            "max": float(rel_frob.max().item()),
+            "mean_over_steps": float(rel_frob.mean().item()),
+            "min_over_steps": float(rel_frob.min().item()),
+            "max_over_steps": float(rel_frob.max().item()),
         }
         out["cosine_similarity"] = {
-            "mean_over_steps_and_layers": float(cosine_similarity.mean().item()),
-            "min": float(cosine_similarity.min().item()),
-            "max": float(cosine_similarity.max().item()),
+            "mean_over_steps": float(cosine_similarity.mean().item()),
+            "min_over_steps": float(cosine_similarity.min().item()),
+            "max_over_steps": float(cosine_similarity.max().item()),
         }
         out["retained_energy"] = {
-            "mean_over_steps_and_layers": float(retained_energy.mean().item()),
-            "min": float(retained_energy.min().item()),
-            "max": float(retained_energy.max().item()),
-        }
-        out["per_layer"] = {
-            "mean_mse": [float(x) for x in mse.mean(dim=0).tolist()],
-            "max_mse": [float(x) for x in mse.max(dim=0).values.tolist()],
-            "mean_relative_frobenius_error": [
-                float(x) for x in rel_frob.mean(dim=0).tolist()
-            ],
-            "mean_cosine_similarity": [
-                float(x) for x in cosine_similarity.mean(dim=0).tolist()
-            ],
-            "mean_retained_energy": [
-                float(x) for x in retained_energy.mean(dim=0).tolist()
-            ],
+            "mean_over_steps": float(retained_energy.mean().item()),
+            "min_over_steps": float(retained_energy.min().item()),
+            "max_over_steps": float(retained_energy.max().item()),
         }
     return out
 
 
 def main():
-    run_dir = EXPERIMENTS_ROOT / datetime.now().strftime("suite_kl_%Y%m%d_%H%M%S")
+    run_dir = EXPERIMENTS_ROOT / datetime.now().strftime("suite_kl_layer_sweep_%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=False)
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
@@ -436,56 +422,83 @@ def main():
         device_map="auto",
     )
 
-    print(f"Running KL suite with {len(PROMPT_SUITE)} prompts")
+    target_layers = _discover_compressible_layers(model, tokenizer)
+    if not target_layers:
+        raise ValueError("No non-None recurrent state layers found to sweep.")
+
+    run_meta = {
+        "model_name": MODEL_NAME,
+        "low_rank_rank": LOW_RANK_RANK,
+        "max_new_tokens_cap": MAX_NEW_TOKENS,
+        "num_prompts": len(PROMPT_SUITE),
+        "target_layers": target_layers,
+    }
+    (run_dir / "run_config.json").write_text(json.dumps(run_meta, indent=2), encoding="utf-8")
+
+    print(f"Running KL layer sweep with {len(PROMPT_SUITE)} prompts")
+    print(f"Target layers: {target_layers}")
     print(f"Saving outputs to: {run_dir}")
 
-    for i, prompt in enumerate(PROMPT_SUITE, start=1):
-        prompt_id = f"prompt_{i:02d}"
-        print(f"\n[{i:02d}/{len(PROMPT_SUITE)}] {prompt_id}")
-        try:
-            kl_tensor, metric_tensors, response, prompt_len, meta = run_single_prompt(
-                prompt=prompt,
-                model=model,
-                tokenizer=tokenizer,
-                low_rank_n=LOW_RANK_RANK,
-                max_new_tokens=MAX_NEW_TOKENS,
-            )
-            kl_path = run_dir / f"{prompt_id}_kl.pt"
-            mse_path = run_dir / f"{prompt_id}_mse.pt"
-            rel_frob_path = run_dir / f"{prompt_id}_rel_frob.pt"
-            cosine_path = run_dir / f"{prompt_id}_cosine_similarity.pt"
-            retained_energy_path = run_dir / f"{prompt_id}_retained_energy.pt"
-            summary_path = run_dir / f"{prompt_id}_metrics_summary.json"
-            text_path = run_dir / f"{prompt_id}_prompt_response.txt"
+    total = len(target_layers) * len(PROMPT_SUITE)
+    done = 0
+    for layer_idx in target_layers:
+        layer_dir = run_dir / f"layer_{layer_idx:02d}"
+        layer_dir.mkdir(parents=True, exist_ok=False)
+        print(f"\n=== Layer {layer_idx} ({len(PROMPT_SUITE)} prompts) ===")
 
-            torch.save(kl_tensor, kl_path)
-            torch.save(metric_tensors["mse"], mse_path)
-            torch.save(metric_tensors["rel_frob"], rel_frob_path)
-            torch.save(metric_tensors["cosine_similarity"], cosine_path)
-            torch.save(metric_tensors["retained_energy"], retained_energy_path)
-            summary = _summary_stats(kl_tensor, metric_tensors, meta)
-            summary["prompt_id"] = prompt_id
-            summary["low_rank_rank"] = LOW_RANK_RANK
-            summary["max_new_tokens_cap"] = MAX_NEW_TOKENS
-            summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-            text_path.write_text(
-                f"PROMPT:\n{prompt}\n\nRESPONSE:\n{response}\n",
-                encoding="utf-8",
-            )
+        for i, prompt in enumerate(PROMPT_SUITE, start=1):
+            done += 1
+            prompt_id = f"prompt_{i:02d}"
+            print(f"\n[{done:03d}/{total}] layer={layer_idx} {prompt_id}")
+            try:
+                kl_tensor, metric_tensors, response, _prompt_len, meta = run_single_prompt_layer(
+                    prompt=prompt,
+                    model=model,
+                    tokenizer=tokenizer,
+                    target_layer=layer_idx,
+                    low_rank_n=LOW_RANK_RANK,
+                    max_new_tokens=MAX_NEW_TOKENS,
+                )
+                kl_path = layer_dir / f"{prompt_id}_kl.pt"
+                mse_path = layer_dir / f"{prompt_id}_mse.pt"
+                rel_frob_path = layer_dir / f"{prompt_id}_rel_frob.pt"
+                cosine_path = layer_dir / f"{prompt_id}_cosine_similarity.pt"
+                retained_energy_path = layer_dir / f"{prompt_id}_retained_energy.pt"
+                summary_path = layer_dir / f"{prompt_id}_metrics_summary.json"
+                text_path = layer_dir / f"{prompt_id}_prompt_response.txt"
 
-            print(f"  metric steps: {meta['num_metric_steps']}, generated tokens: {meta['num_generated_tokens']}")
-            print(f"  stopped: {meta['stopped_reason']}")
-            print(f"  elapsed: {meta['elapsed_seconds']:.3f}s")
-            if summary.get("kl"):
-                print(f"  KL mean: {summary['kl']['mean']:.6f}")
-            print(
-                "  Saved: "
-                f"{kl_path.name}, {mse_path.name}, {rel_frob_path.name}, "
-                f"{cosine_path.name}, {retained_energy_path.name}, "
-                f"{summary_path.name}, {text_path.name}"
-            )
-        except Exception as exc:
-            print(f"Failed for {prompt_id}: {exc}")
+                torch.save(kl_tensor, kl_path)
+                torch.save(metric_tensors["mse"], mse_path)
+                torch.save(metric_tensors["rel_frob"], rel_frob_path)
+                torch.save(metric_tensors["cosine_similarity"], cosine_path)
+                torch.save(metric_tensors["retained_energy"], retained_energy_path)
+                summary = _summary_stats(kl_tensor, metric_tensors, meta)
+                summary["prompt_id"] = prompt_id
+                summary["layer"] = layer_idx
+                summary["low_rank_rank"] = LOW_RANK_RANK
+                summary["max_new_tokens_cap"] = MAX_NEW_TOKENS
+                summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+                text_path.write_text(
+                    f"PROMPT:\n{prompt}\n\nRESPONSE:\n{response}\n",
+                    encoding="utf-8",
+                )
+
+                print(
+                    f"  metric steps: {meta['num_metric_steps']}, "
+                    f"generated tokens: {meta['num_generated_tokens']}"
+                )
+                print(f"  stopped: {meta['stopped_reason']}")
+                print(f"  elapsed: {meta['elapsed_seconds']:.3f}s")
+                if summary.get("kl"):
+                    print(f"  KL mean: {summary['kl']['mean']:.6f}")
+                print(
+                    "  Saved: "
+                    f"{kl_path.name}, {mse_path.name}, {rel_frob_path.name}, "
+                    f"{cosine_path.name}, {retained_energy_path.name}, "
+                    f"{summary_path.name}, {text_path.name}"
+                )
+            except Exception as exc:
+                print(f"Failed for layer={layer_idx}, {prompt_id}: {exc}")
 
     print("\nDone.")
     print(f"Experiment artifacts are in: {run_dir}")
