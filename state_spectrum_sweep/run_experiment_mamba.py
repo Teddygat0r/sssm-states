@@ -24,13 +24,13 @@ Examples
 Inspect cache fields after prompt prefill:
     python state_spectrum_sweep/run_experiment_mamba.py \
         --backend hf \
-        --model state-spaces/mamba-130m \
+        --model state-spaces/mamba-130m-hf \
         --inspect-cache
 
 Run low-rank experiments on Hugging Face Mamba:
     python state_spectrum_sweep/run_experiment_mamba.py \
         --backend hf \
-        --model state-spaces/mamba-130m \
+        --model state-spaces/mamba-130m-hf \
         --experiment low_rank
 
 Run quantization experiments on official `mamba_ssm`:
@@ -129,6 +129,22 @@ def _default_tokenizer_for_model(model_name: str) -> str:
     # if "state-spaces/mamba" in lowered:
     #     return DEFAULT_TOKENIZER
     return model_name
+
+def _resolve_hf_input_device(model) -> torch.device:
+    hf_device_map = getattr(model, "hf_device_map", None)
+    if hf_device_map:
+        for module_name in ("backbone.embeddings", "model.embeddings", "embeddings", ""):
+            device_name = hf_device_map.get(module_name)
+            if device_name not in (None, "disk"):
+                return torch.device(device_name)
+        for device_name in hf_device_map.values():
+            if device_name not in (None, "disk"):
+                return torch.device(device_name)
+
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
 
 def _resolve_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -387,6 +403,15 @@ class HuggingFaceBackend(BaseBackend):
         )
         if self.device != "cuda":
             self.model.to(self.device)
+        self.device = str(_resolve_hf_input_device(self.model))
+    
+    def prepare_prompt(self, prompt: str) -> torch.Tensor:
+        if self.tokenizer is None or self.model is None:
+            raise RuntimeError("Tokenizer/model not loaded.")
+        text = _tokenizer_chat_or_plain(self.tokenizer, prompt)
+        encoded = self.tokenizer([text], return_tensors="pt")
+        input_device = _resolve_hf_input_device(self.model)
+        return encoded["input_ids"].to(input_device)
 
     def _extract_cache(self, output: Any) -> Any:
         cache_obj = getattr(output, "cache_params", None)
