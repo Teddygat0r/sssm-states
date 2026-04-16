@@ -517,8 +517,7 @@ def _make_perturbed_cache(
             if current.dim() < 2:
                 approx = current.detach().clone()
             else:
-                delta = current - base
-                approx = base + low_rank_svd(delta, n=low_rank_rank)
+                approx = low_rank_svd(current, n=low_rank_rank)
         elif experiment == "quant":
             approx = fake_quantize(current, n_bits=quant_bits)
         else:
