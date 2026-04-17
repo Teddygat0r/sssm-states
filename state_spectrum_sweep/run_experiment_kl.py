@@ -1,14 +1,8 @@
-"""
-Prompt-suite experiment: per-token KL divergence and MSE between original logits and
-logits from a low-rank approximation of recurrent-state deltas (see notebook flow).
-
-Stops generation on EOS (tokenizer/model), with MAX_NEW_TOKENS as a safety cap.
-"""
-
 from __future__ import annotations
 
 import copy
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -20,7 +14,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
 
 
 MODEL_NAME = "Qwen/Qwen3.5-4B"
-LOW_RANK_RANK = 16
+LOW_RANK_RANK = int(os.getenv("LOW_RANK_RANK", "16"))
 MAX_NEW_TOKENS = 200
 SAMPLING_TEMPERATURE = 0.7
 SAMPLING_TOP_P = 0.8
@@ -62,6 +56,113 @@ PROMPT_SUITE = [
 ]
 
 
+def _clone_recurrent_state(recurrent_state):
+    if recurrent_state is None:
+        return None
+
+    if isinstance(recurrent_state, torch.Tensor):
+        return recurrent_state.detach().clone()
+
+    if isinstance(recurrent_state, (list, tuple)):
+        return [
+            state.detach().clone() if state is not None else None
+            for state in recurrent_state
+        ]
+
+    raise TypeError(f"Unsupported recurrent_state type: {type(recurrent_state)}")
+
+
+def _extract_layer_index_from_name(name: str) -> int | None:
+    parts = name.split(".")
+    if len(parts) >= 3 and parts[0] == "model" and parts[1] == "layers":
+        try:
+            return int(parts[2])
+        except ValueError:
+            return None
+    return None
+
+
+def _resolve_recurrent_update_call(args, kwargs):
+    layer_idx = kwargs.get("layer_idx")
+    recurrent_state = None
+
+    for key in ("recurrent_state", "recurrent_states", "state", "new_state", "new_recurrent_state"):
+        if key in kwargs and kwargs[key] is not None:
+            recurrent_state = kwargs[key]
+            break
+
+    for arg in args:
+        if layer_idx is None and isinstance(arg, int):
+            layer_idx = arg
+        if recurrent_state is None and isinstance(arg, (torch.Tensor, list, tuple)):
+            recurrent_state = arg
+
+    return layer_idx, recurrent_state
+
+
+def _capture_recurrent_state_updates(cache_cls_or_instance, num_layers: int, fn):
+    cache_cls = (
+        cache_cls_or_instance
+        if isinstance(cache_cls_or_instance, type)
+        else type(cache_cls_or_instance)
+    )
+    update_recurrent_state = getattr(cache_cls, "update_recurrent_state", None)
+    if update_recurrent_state is None:
+        raise ValueError(
+            "Cache object has no update_recurrent_state method; cannot capture recurrent states."
+        )
+
+    captured = [None] * num_layers
+
+    def wrapped_update_recurrent_state(self, *args, **kwargs):
+        result = update_recurrent_state(self, *args, **kwargs)
+        layer_idx, recurrent_state = _resolve_recurrent_update_call(args, kwargs)
+        if layer_idx is not None and recurrent_state is not None and 0 <= layer_idx < num_layers:
+            captured[layer_idx] = _clone_recurrent_state(recurrent_state)
+        return result
+
+    cache_cls.update_recurrent_state = wrapped_update_recurrent_state
+    try:
+        output = fn()
+    finally:
+        cache_cls.update_recurrent_state = update_recurrent_state
+
+    return output, captured
+
+
+def _set_recurrent_state(cache, layer_idx: int, recurrent_state):
+    update_recurrent_state = getattr(cache, "update_recurrent_state", None)
+    if update_recurrent_state is None:
+        raise ValueError(
+            "Cache object has no update_recurrent_state method; cannot inject recurrent states."
+        )
+
+    attempts = (
+        ((), {"layer_idx": layer_idx, "recurrent_state": recurrent_state}),
+        ((), {"layer_idx": layer_idx, "new_recurrent_state": recurrent_state}),
+        ((), {"layer_idx": layer_idx, "state": recurrent_state}),
+        ((layer_idx, recurrent_state), {}),
+        ((recurrent_state, layer_idx), {}),
+    )
+    last_error = None
+    for args, kwargs in attempts:
+        try:
+            update_recurrent_state(*args, **kwargs)
+            return
+        except TypeError as exc:
+            last_error = exc
+
+    raise TypeError(
+        f"Could not call update_recurrent_state for layer {layer_idx}."
+    ) from last_error
+
+
+def _inject_recurrent_states(cache, recurrent_states):
+    for layer_idx, recurrent_state in enumerate(recurrent_states):
+        if recurrent_state is not None:
+            _set_recurrent_state(cache, layer_idx, recurrent_state)
+
+
 def generate_delta(state, state_ref):
     if isinstance(state, torch.Tensor):
         return state - state_ref
@@ -76,17 +177,12 @@ def generate_delta(state, state_ref):
     raise TypeError(f"Unsupported state type for delta: {type(state)}")
 
 
-# def low_rank_svd(tensor: torch.Tensor, n: int = 16) -> torch.Tensor:
-#     u, s, v = torch.linalg.svd(tensor, full_matrices=False, driver='gesvdj')
-#     u, s, v = u[..., :n], s[..., :n], v[..., :n, :]
-#     return u @ torch.diag_embed(s) @ v
-
 def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
-    # randomized/truncated SVD; much cheaper when n << min(m, n)
     q = min(n + oversample, min(tensor.shape[-2:]))
     u, s, v = torch.svd_lowrank(tensor, q=q, niter=niter)
     u, s, v = u[..., :n], s[..., :n], v[..., :n]
     return (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
+
 
 def low_rank_svd_list(lst: list, n: int = 16) -> list:
     batch = torch.stack(lst, dim=0)
@@ -129,13 +225,25 @@ def _sample_next_token(
     cumulative_probs = torch.cumsum(topk_probs, dim=-1)
 
     remove_mask = cumulative_probs > top_p
-    remove_mask[..., 0] = False  # Keep at least one token.
+    remove_mask[..., 0] = False
     filtered_probs = topk_probs.masked_fill(remove_mask, 0.0)
     filtered_probs = filtered_probs / filtered_probs.sum(dim=-1, keepdim=True).clamp_min(1e-12)
 
     sampled_in_topk = torch.multinomial(filtered_probs, num_samples=1)
     next_token = torch.gather(topk_idx, dim=-1, index=sampled_in_topk)
     return next_token
+
+
+def _forward_with_state_capture(model, cache_cls_or_instance, num_layers: int, **forward_kwargs):
+    return _capture_recurrent_state_updates(
+        cache_cls_or_instance,
+        num_layers,
+        lambda: model(
+            **forward_kwargs,
+            use_cache=True,
+            return_dict=True,
+        ),
+    )
 
 
 def run_single_prompt(
@@ -146,18 +254,25 @@ def run_single_prompt(
     low_rank_n: int = LOW_RANK_RANK,
     max_new_tokens: int = MAX_NEW_TOKENS,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor], str, int, dict]:
-    """
-    Returns:
-        kl_per_step: float tensor [T]
-        metric tensors with shape [T, L] for:
-            mse, rel_frob, cosine_similarity, retained_energy
-        response text, prompt length in tokens, metadata dict
-    """
+    model_device = next(model.parameters()).device
+    gated_delta_layer_indices = sorted(
+        idx
+        for idx in (
+            _extract_layer_index_from_name(name)
+            for name, module in model.named_modules()
+            if isinstance(module, Qwen3_5GatedDeltaNet)
+        )
+        if idx is not None
+    )
+    if not gated_delta_layer_indices:
+        raise RuntimeError("No Qwen3_5GatedDeltaNet layers found in the model.")
+    num_layers = max(gated_delta_layer_indices) + 1
+
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
-    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    model_inputs = tokenizer([text], return_tensors="pt").to(model_device)
     prompt_len = int(model_inputs.input_ids.shape[1])
     eos_token_id = _resolve_eos_token_id(tokenizer, model)
 
@@ -177,17 +292,25 @@ def run_single_prompt(
         past_key_values = out.past_key_values
         if past_key_values is None:
             raise ValueError("Model returned no past_key_values; cannot compute recurrent deltas.")
+        cache_cls = type(past_key_values)
 
-        recurrent = getattr(past_key_values, "recurrent_states", None)
-        if recurrent is None:
+        # Re-run the prompt forward under cache-class capture now that we know the exact cache type.
+        out, original_state = _forward_with_state_capture(
+            model,
+            cache_cls,
+            num_layers,
+            **model_inputs,
+        )
+        past_key_values = out.past_key_values
+        if past_key_values is None:
+            raise ValueError("Model returned no past_key_values on captured prompt forward.")
+
+        if not any(state is not None for state in original_state):
             raise ValueError(
-                "past_key_values has no recurrent_states; this script expects Qwen3.5-style cache."
+                "Could not capture recurrent states from DynamicCache.update_recurrent_state."
             )
 
-        original_state = [
-            s.detach().clone() if s is not None else None
-            for s in past_key_values.recurrent_states
-        ]
+        current_state = [_clone_recurrent_state(state) for state in original_state]
         next_token = _sample_next_token(
             out.logits,
             temperature=SAMPLING_TEMPERATURE,
@@ -195,7 +318,6 @@ def run_single_prompt(
             top_k=SAMPLING_TOP_K,
         )
 
-        # No generated tokens if first greedy token is already EOS
         if eos_token_id is not None and next_token.item() == eos_token_id:
             empty_kl = torch.tensor([], dtype=DTYPE, device="cpu")
             empty_metrics = {
@@ -224,54 +346,43 @@ def run_single_prompt(
 
             generated_ids.append(int(token_in.item()))
             cache_position = torch.tensor(
-                [prompt_len + step], device=model.device, dtype=torch.long
+                [prompt_len + step], device=model_device, dtype=torch.long
             )
 
-            # After forward, cache is updated (same reference semantics as notebook).
-            deltas = generate_delta(
-                past_key_values.recurrent_states,
-                original_state,
-            )
+            deltas = generate_delta(current_state, original_state)
             svd_start_time = perf_counter()
             low_rank_deltas = low_rank_svd_list(deltas, n=low_rank_n)
             svd_elapsed_s = perf_counter() - svd_start_time
             print(f"    token {step + 1} low-rank svd: {svd_elapsed_s:.3f}s")
 
-            approximated_states = copy.deepcopy(past_key_values)
-            approximated_states.recurrent_states = []
+            approximated_state = [_clone_recurrent_state(state) for state in original_state]
             mse_error: list[torch.Tensor] = []
             rel_frob_error: list[torch.Tensor] = []
             cosine_similarity_vals: list[torch.Tensor] = []
             retained_energy_vals: list[torch.Tensor] = []
-            ssm_states = 0
-            for i in range(len(original_state)):
-                if original_state[i] is not None:
-                    approx_state = original_state[i] + low_rank_deltas[ssm_states]
-                    approximated_states.recurrent_states.append(approx_state)
-                    current_state = past_key_values.recurrent_states[i]
-                    mse_error.append(
-                        F.mse_loss(
-                            current_state,
-                            approx_state,
-                        )
+            ssm_state_idx = 0
+            for layer_idx in range(num_layers):
+                if current_state[layer_idx] is None:
+                    continue
+                approx_state = original_state[layer_idx] + low_rank_deltas[ssm_state_idx]
+                approximated_state[layer_idx] = approx_state
+                current_layer_state = current_state[layer_idx]
+                mse_error.append(F.mse_loss(current_layer_state, approx_state))
+                err = current_layer_state - approx_state
+                current_norm = current_layer_state.norm().clamp_min(1e-12)
+                rel_frob_error.append(err.norm() / current_norm)
+                cosine_similarity_vals.append(
+                    F.cosine_similarity(
+                        current_layer_state.flatten(), approx_state.flatten(), dim=0
                     )
-                    err = current_state - approx_state
-                    current_norm = current_state.norm().clamp_min(1e-12)
-                    rel_frob_error.append(err.norm() / current_norm)
-                    cosine_similarity_vals.append(
-                        F.cosine_similarity(
-                            current_state.flatten(), approx_state.flatten(), dim=0
-                        )
-                    )
-                    retained_energy_vals.append(
-                        1.0 - (err.pow(2).sum() / current_state.pow(2).sum().clamp_min(1e-12))
-                    )
-                    ssm_states += 1
-                else:
-                    approximated_states.recurrent_states.append(None)
+                )
+                retained_energy_vals.append(
+                    1.0 - (err.pow(2).sum() / current_layer_state.pow(2).sum().clamp_min(1e-12))
+                )
+                ssm_state_idx += 1
 
             if not mse_error:
-                raise ValueError("No non-None recurrent states; cannot compute MSE.")
+                raise ValueError("No recurrent states were available to compute approximation metrics.")
 
             mse_rows.append(torch.stack(mse_error, dim=0).detach().float().cpu())
             rel_frob_rows.append(torch.stack(rel_frob_error, dim=0).detach().float().cpu())
@@ -280,26 +391,28 @@ def run_single_prompt(
                 torch.stack(retained_energy_vals, dim=0).detach().float().cpu()
             )
 
+            approximated_cache = copy.deepcopy(past_key_values)
+            _inject_recurrent_states(approximated_cache, approximated_state)
+
             forward_start_time = perf_counter()
-            out = model(
+            out, next_state = _forward_with_state_capture(
+                model,
+                cache_cls,
+                num_layers,
                 input_ids=token_in,
                 past_key_values=past_key_values,
                 cache_position=cache_position,
-                use_cache=True,
-                return_dict=True,
             )
-            out_approx = model(
+            out_approx, _ = _forward_with_state_capture(
+                model,
+                cache_cls,
+                num_layers,
                 input_ids=token_in,
-                past_key_values=approximated_states,
+                past_key_values=approximated_cache,
                 cache_position=cache_position,
-                use_cache=True,
-                return_dict=True,
             )
             forward_elapsed_s = perf_counter() - forward_start_time
-            print(
-                f"    token {step + 1} model forwards: "
-                f"{forward_elapsed_s:.3f}s"
-            )
+            print(f"    token {step + 1} model forwards: {forward_elapsed_s:.3f}s")
 
             out_log_logits = torch.log_softmax(out.logits, dim=-1)
             approx_log_logits = torch.log_softmax(out_approx.logits, dim=-1)
@@ -318,11 +431,9 @@ def run_single_prompt(
                 top_k=SAMPLING_TOP_K,
             )
             past_key_values = out.past_key_values
+            current_state = next_state
             token_elapsed_s = perf_counter() - token_start_time
-            print(
-                f"  token {step + 1} finished "
-                f"({token_elapsed_s:.3f}s)"
-            )
+            print(f"  token {step + 1} finished ({token_elapsed_s:.3f}s)")
             step += 1
 
             if eos_token_id is not None and next_token.item() == eos_token_id:

@@ -69,7 +69,7 @@ HF_MODEL_REWRITES = {
 }
 LOW_RANK_RANK = 16
 QUANT_BITS = 8
-MAX_NEW_TOKENS = 64
+MAX_NEW_TOKENS = 100
 SAMPLING_TEMPERATURE = 0.7
 SAMPLING_TOP_P = 0.8
 SAMPLING_TOP_K = 20
@@ -85,7 +85,27 @@ PROMPT_SUITE = [
     "Give me a short bedtime story about a robot and a cat.",
     "List five practical ways to reduce household energy usage.",
     "What are the differences between lists and tuples in Python?",
+    "Write a haiku about rain in a city.",
+    "Create a two-day itinerary for visiting New York City.",
+    "Explain Newton's second law with a simple example.",
+    "Suggest a healthy breakfast under 400 calories.",
+    "Draft a polite email asking for a project deadline extension.",
+    "What are the main ideas behind gradient descent?",
+    "Give me three interview questions for a junior data scientist role.",
+    "Describe the plot of Romeo and Juliet in four sentences.",
+    "Write a short dialogue between a teacher and a curious student.",
+    "Provide a regex for validating a basic email format.",
+    "What is overfitting in machine learning, and how can we reduce it?",
+    "Generate a list of ten random words and use each in a sentence.",
+    "Explain recursion to a 10-year-old.",
+    "Compare REST and GraphQL in a concise table-style format.",
     "Write a simple Python function to check if a number is prime.",
+    "What are three ethical concerns with large language models?",
+    "Give me a 7-day beginner workout plan with light equipment.",
+    "Describe how rainbows form using simple physics.",
+    "Write a motivational message for someone learning to code.",
+    "Explain the difference between precision and recall.",
+    "Create a short sci-fi scene set on a lunar research station.",
 ]
 
 
@@ -123,7 +143,16 @@ def _require_mamba_ssm():
             "The `mamba_ssm` backend requires the official `mamba-ssm` package."
         ) from exc
     return MambaLMHeadModel
-  
+
+def _require_mamba_inference_params():
+    try:
+        from mamba_ssm.utils.generation import InferenceParams
+    except ImportError as exc:
+        raise RuntimeError(
+            "The `mamba_ssm` backend requires `mamba_ssm.utils.generation.InferenceParams`."
+        ) from exc
+    return InferenceParams
+
 def _default_tokenizer_for_model(model_name: str) -> str:
     lowered = model_name.lower()
     # if "state-spaces/mamba" in lowered:
@@ -288,17 +317,49 @@ def _set_by_path(obj: Any, path: tuple[Any, ...], value: Any) -> None:
     if not path:
         raise ValueError("Cannot assign to an empty path.")
 
-    parent = _get_by_path(obj, path[:-1]) if len(path) > 1 else obj
+    parent = obj
+    lineage: list[tuple[Any, Any]] = []
+    for key in path[:-1]:
+        lineage.append((parent, key))
+        if isinstance(parent, dict):
+            parent = parent[key]
+        elif isinstance(parent, (list, tuple)):
+            parent = parent[key]
+        else:
+            parent = getattr(parent, key)
     key = path[-1]
 
     if isinstance(parent, dict):
         parent[key] = value
-    elif isinstance(parent, list):
+        return
+    if isinstance(parent, list):
         parent[key] = value
-    elif isinstance(parent, tuple):
-        raise TypeError(f"Cannot mutate tuple-backed cache path: {path}")
-    else:
+        return
+    if not isinstance(parent, tuple):
         setattr(parent, key, value)
+        return
+    
+    updated: Any = tuple(
+        value if idx == key else item
+        for idx, item in enumerate(parent)
+    )
+    for ancestor, ancestor_key in reversed(lineage):
+        if isinstance(ancestor, dict):
+            ancestor[ancestor_key] = updated
+            return
+        if isinstance(ancestor, list):
+            ancestor[ancestor_key] = updated
+            return
+        if isinstance(ancestor, tuple):
+            updated = tuple(
+                updated if idx == ancestor_key else item
+                for idx, item in enumerate(ancestor)
+            )
+            continue
+        setattr(ancestor, ancestor_key, updated)
+        return
+
+    raise TypeError(f"Cannot mutate tuple-backed cache path: {path}")
 
 
 def _matches_subset(name: str, subset: str) -> bool:
@@ -452,20 +513,55 @@ class NativeMambaBackend(BaseBackend):
             max_seqlen=total_len,
             dtype=self.dtype,
         )
+    
+    def _wrap_inference_cache(
+        self,
+        cache_obj: Any,
+        *,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        seqlen_offset: int,
+    ) -> Any:
+        if not isinstance(cache_obj, dict):
+            if hasattr(cache_obj, "seqlen_offset"):
+                cache_obj.seqlen_offset = seqlen_offset
+            return cache_obj
+
+        InferenceParams = _require_mamba_inference_params()
+        return InferenceParams(
+            max_seqlen=int(input_ids.shape[1] + max_new_tokens),
+            max_batch_size=int(input_ids.shape[0]),
+            seqlen_offset=seqlen_offset,
+            batch_size_offset=0,
+            key_value_memory_dict=cache_obj,
+            lengths_per_sample=None,
+        )
 
     def prefill(self, input_ids: torch.Tensor, max_new_tokens: int) -> tuple[torch.Tensor, Any]:
         inference_params = self._allocate_cache(input_ids, max_new_tokens=max_new_tokens)
+        inference_params = self._wrap_inference_cache(
+            inference_params,
+            input_ids=input_ids,
+            max_new_tokens=max_new_tokens,
+            seqlen_offset=0,
+        )
         output = self.model(input_ids=input_ids, inference_params=inference_params)
         logits = getattr(output, "logits", output)
+        if hasattr(inference_params, "seqlen_offset"):
+            inference_params.seqlen_offset = int(input_ids.shape[1])
         return logits, inference_params
 
     def step(self, input_ids: torch.Tensor, cache_obj: Any) -> tuple[torch.Tensor, Any]:
+        if hasattr(cache_obj, "seqlen_offset"):
+            cache_obj.seqlen_offset = int(cache_obj.seqlen_offset)
         output = self.model(
             input_ids=input_ids,
             inference_params=cache_obj,
             num_last_tokens=1,
         )
         logits = getattr(output, "logits", output)
+        if hasattr(cache_obj, "seqlen_offset"):
+            cache_obj.seqlen_offset += int(input_ids.shape[1])
         return logits, cache_obj
 
 
@@ -706,6 +802,11 @@ def run_single_prompt(
 def inspect_cache(prompt: str, backend: BaseBackend, max_new_tokens: int, subset: str) -> None:
     input_ids = backend.prepare_prompt(prompt)
     _, cache_obj = backend.prefill(input_ids, max_new_tokens=max_new_tokens)
+    print(f"Cache object type: {type(cache_obj)}")
+    if hasattr(cache_obj, "__dict__"):
+        print(f"Cache object fields: {sorted(vars(cache_obj).keys())}")
+    elif isinstance(cache_obj, dict):
+        print(f"Cache dict keys: {sorted(cache_obj.keys())}")
     all_views = extract_cache_tensors(cache_obj, subset="all")
     filtered_views = extract_cache_tensors(cache_obj, subset=subset)
     print(f"All tensor leaves found: {len(all_views)}")

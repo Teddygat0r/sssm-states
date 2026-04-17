@@ -7,7 +7,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
 
 
 MODEL_NAME = "Qwen/Qwen3.5-4B"
-TARGET_LAYER_SUBSTR = "30"
+TARGET_LAYER_SUBSTR = "30"  # "model.layers.0.linear_attn"
 SAVE_EVERY = 5  # Set to 2 to save every other token, etc.
 TOP_N_SINGULAR_VALUES = 16
 MAX_NEW_TOKENS = 200
@@ -63,7 +63,59 @@ def _clone_recurrent_state_to_cpu(recurrent_state):
     raise TypeError(f"Unsupported recurrent_state type: {type(recurrent_state)}")
 
 
-def get_post_hook(cache_store, save_every=1):
+def _extract_layer_index_from_name(name: str) -> int | None:
+    parts = name.split(".")
+    if len(parts) >= 3 and parts[0] == "model" and parts[1] == "layers":
+        try:
+            return int(parts[2])
+        except ValueError:
+            return None
+    return None
+
+
+def _resolve_recurrent_update_call(args, kwargs):
+    layer_idx = kwargs.get("layer_idx")
+    recurrent_state = None
+
+    for key in ("recurrent_state", "recurrent_states", "state", "value", "new_state"):
+        if key in kwargs and kwargs[key] is not None:
+            recurrent_state = kwargs[key]
+            break
+
+    for arg in args:
+        if layer_idx is None and isinstance(arg, int):
+            layer_idx = arg
+        if recurrent_state is None and isinstance(arg, (torch.Tensor, list, tuple)):
+            recurrent_state = arg
+
+    return layer_idx, recurrent_state
+
+
+def _install_dynamic_cache_capture(cache_params, cache_store, target_layer_idx, save_every):
+    if getattr(cache_params, "_sssm_capture_installed", False):
+        return
+
+    original_update = cache_params.update_recurrent_state
+    update_counter = {"n": 0}
+
+    def wrapped_update_recurrent_state(*args, **kwargs):
+        result = original_update(*args, **kwargs)
+        layer_idx, recurrent_state = _resolve_recurrent_update_call(args, kwargs)
+
+        if recurrent_state is not None and (
+            target_layer_idx is None or layer_idx == target_layer_idx
+        ):
+            if update_counter["n"] % save_every == 0:
+                cache_store.append(_clone_recurrent_state_to_cpu(recurrent_state))
+            update_counter["n"] += 1
+
+        return result
+
+    cache_params.update_recurrent_state = wrapped_update_recurrent_state
+    cache_params._sssm_capture_installed = True
+
+
+def get_post_hook(cache_store, target_layer_idx=None, save_every=1):
     if save_every < 1:
         raise ValueError("save_every must be >= 1")
 
@@ -73,13 +125,21 @@ def get_post_hook(cache_store, save_every=1):
         cache_params = kwargs.get("cache_params", None)
         if cache_params is None:
             return
+        
+        _install_dynamic_cache_capture(
+            cache_params,
+            cache_store,
+            target_layer_idx=target_layer_idx,
+            save_every=save_every,
+        )
 
         if step_counter["n"] % save_every == 0:
             recurrent_state = getattr(cache_params, "recurrent_state", None)
             if recurrent_state is None:
                 # Backward-compatible fallback depending on model implementation.
                 recurrent_state = getattr(cache_params, "recurrent_states", None)
-            cache_store.append(_clone_recurrent_state_to_cpu(recurrent_state))
+            if recurrent_state is not None:
+                cache_store.append(_clone_recurrent_state_to_cpu(recurrent_state))
 
         step_counter["n"] += 1
 
@@ -111,10 +171,16 @@ def get_s_energy(singular_values, n=-1):
 def run_single_prompt(prompt, model, tokenizer, target_modules):
     cache_store = []
     hook_handles = []
+    model_device = next(model.parameters()).device
+    target_layer_idx = _extract_layer_index_from_name(TARGET_LAYER_SUBSTR)
 
     for module in target_modules:
         handle = module.register_forward_hook(
-            get_post_hook(cache_store, save_every=SAVE_EVERY),
+            get_post_hook(
+                cache_store,
+                target_layer_idx=target_layer_idx,
+                save_every=SAVE_EVERY,
+            ),
             with_kwargs=True,
         )
         hook_handles.append(handle)
@@ -123,7 +189,7 @@ def run_single_prompt(prompt, model, tokenizer, target_modules):
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
-    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    model_inputs = tokenizer([text], return_tensors="pt").to(model_device)
 
     with torch.inference_mode():
         generated_ids = model.generate(
@@ -142,8 +208,10 @@ def run_single_prompt(prompt, model, tokenizer, target_modules):
 
     if len(cache_store) < 2:
         raise ValueError(
-            "Need at least 2 saved recurrent states to compute deltas. "
-            "Increase MAX_NEW_TOKENS or reduce SAVE_EVERY."
+            # "Need at least 2 saved recurrent states to compute deltas. "
+            # "Increase MAX_NEW_TOKENS or reduce SAVE_EVERY."
+            "Need at least 2 non-None saved recurrent states to compute deltas. "
+            "Try a different TARGET_LAYER_SUBSTR or reduce SAVE_EVERY."
         )
 
     deltas = [
@@ -167,20 +235,31 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
         device_map="auto",
     )
 
-    target_modules = [
-        module
+    gated_delta_modules = [
+        (name, module)
         for name, module in model.named_modules()
-        if isinstance(module, Qwen3_5GatedDeltaNet) and TARGET_LAYER_SUBSTR in name
+        if isinstance(module, Qwen3_5GatedDeltaNet)
+    ]
+    print(f"Found {len(gated_delta_modules)} Qwen3_5GatedDeltaNet modules:")
+    for name, _module in gated_delta_modules:
+        print(f"  {name}")
+
+    target_modules = [
+        module for name, module in gated_delta_modules if TARGET_LAYER_SUBSTR in name
     ]
     if not target_modules:
         raise RuntimeError(
             "No Qwen3_5GatedDeltaNet module matched TARGET_LAYER_SUBSTR. "
             "Adjust TARGET_LAYER_SUBSTR."
         )
+    print(
+        f"Matched {len(target_modules)} target module(s) for "
+        f"TARGET_LAYER_SUBSTR={TARGET_LAYER_SUBSTR!r}"
+    )
 
     print(f"Running suite with {len(PROMPT_SUITE)} prompts")
     print(f"Saving outputs to: {run_dir}")
