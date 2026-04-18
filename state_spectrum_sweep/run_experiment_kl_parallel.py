@@ -27,7 +27,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 MODEL_NAME = "Qwen/Qwen3.5-4B"
-LOW_RANK_RANK = 16
+LOW_RANK_RANK = int(os.getenv("RANK", "16"))
 MAX_NEW_TOKENS = 200
 SAMPLING_TEMPERATURE = 0.7
 SAMPLING_TOP_P = 0.8
@@ -77,15 +77,15 @@ PROMPT_SUITE = [
 ]
 
 
-def generate_delta(state, state_ref):
+def generate_delta(state):
     if isinstance(state, torch.Tensor):
-        return state - state_ref
+        return state
 
     if isinstance(state, list):
         return [
-            state[i] - state_ref[i]
+            state[i]
             for i in range(len(state))
-            if state[i] is not None and state_ref[i] is not None
+            if state[i] is not None
         ]
 
     raise TypeError(f"Unsupported state type for delta: {type(state)}")
@@ -273,7 +273,6 @@ def run_single_prompt(
         past_key_values = out.past_key_values
         if past_key_values is None:
             raise ValueError("Model returned no past_key_values; cannot compute recurrent deltas.")
-
         recurrent = getattr(past_key_values, "recurrent_states", None)
         if recurrent is None:
             raise ValueError(
@@ -323,8 +322,7 @@ def run_single_prompt(
             )
 
             deltas = generate_delta(
-                past_key_values.recurrent_states,
-                original_state,
+                past_key_values.recurrent_states
             )
             svd_start_time = perf_counter()
             low_rank_deltas = low_rank_svd_list_cpu(deltas, n=low_rank_n)
@@ -340,7 +338,7 @@ def run_single_prompt(
             ssm_states = 0
             for i in range(len(original_state)):
                 if original_state[i] is not None:
-                    approx_state = original_state[i] + low_rank_deltas[ssm_states]
+                    approx_state = low_rank_deltas[ssm_states]
                     approximated_states.recurrent_states.append(approx_state)
                     current_state = past_key_values.recurrent_states[i]
                     mse_error.append(
@@ -570,7 +568,7 @@ def _run_and_save_prompt(
 
 
 def main():
-    run_dir = EXPERIMENTS_ROOT / datetime.now().strftime("suite_kl_parallel_%Y%m%d_%H%M%S")
+    run_dir = EXPERIMENTS_ROOT / datetime.now().strftime(f"suite_kl_parallel_rank{LOW_RANK_RANK}_%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=False)
     start = perf_counter()
 
