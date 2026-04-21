@@ -556,15 +556,16 @@ class Qwen3_5MoeGatedDeltaNet(nn.Module):
             and cache_params is not None
             and last_recurrent_state is not None
         ):
-            apply_svd = False
-            if not use_precomputed_states:
-                apply_svd = True
+            new_sequence = not cache_params.has_previous_state(self.layer_idx)
+            if new_sequence:
                 self.svd_step_counter = 0
+                apply_svd = True
             else:
-                self.svd_step_counter += 1
-                if self.svd_step_counter >= self.svd_interval:
-                    apply_svd = True
-                    self.svd_step_counter = 0
+                prev = self.svd_step_counter
+                self.svd_step_counter += seq_len
+                apply_svd = (prev // self.svd_interval) < (
+                    self.svd_step_counter // self.svd_interval
+                )
             if apply_svd:
                 compressed = low_rank_svd(last_recurrent_state, n=self.svd_rank)
                 if compressed is not None:
