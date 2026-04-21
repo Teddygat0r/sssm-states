@@ -67,6 +67,33 @@ else:
 logger = logging.get_logger(__name__)
 
 
+def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
+    if tensor.dim() < 2:
+        raise ValueError(f"SVD expects tensor rank >= 2, got shape {tuple(tensor.shape)}")
+    orig_device = tensor.device
+    orig_dtype = tensor.dtype
+
+    cpu_tensor = tensor.detach().to(device="cpu", dtype=torch.float32)
+    q = min(n + oversample, min(cpu_tensor.shape[-2:]))
+
+    try:
+        u, s, v = torch.svd_lowrank(cpu_tensor, q=q, niter=niter)
+    except RuntimeError as e:
+        flat = cpu_tensor.reshape((-1, cpu_tensor.shape[-2], cpu_tensor.shape[-1]))
+        for i in range(flat.shape[0]):
+            try:
+                u, s, v = torch.svd_lowrank(flat[i], q=q, niter=niter)
+            except RuntimeError as e:
+                with open("svd_error.log", "a") as f:
+                    f.write(f"SVD error: {e}\n")
+                    f.write(f"tensor[{i}] = {flat[i]}\n")
+        return None
+
+    u, s, v = u[..., :n], s[..., :n], v[..., :n]
+    approx_cpu = (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
+    return approx_cpu.to(device=orig_device, dtype=orig_dtype)
+
+
 class Qwen3_5MoeVisionRotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor  # fix linting for `register_buffer`
 
@@ -420,6 +447,10 @@ class Qwen3_5MoeGatedDeltaNet(nn.Module):
         self.in_proj_b = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
         self.in_proj_a = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
 
+        self.svd_rank: int | None = None
+        self.svd_interval: int = 1024
+        self.svd_step_counter: int = 0
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -519,6 +550,25 @@ class Qwen3_5MoeGatedDeltaNet(nn.Module):
                 output_final_state=cache_params is not None,
                 use_qk_l2norm_in_kernel=True,
             )
+
+        if (
+            self.svd_rank is not None
+            and cache_params is not None
+            and last_recurrent_state is not None
+        ):
+            apply_svd = False
+            if not use_precomputed_states:
+                apply_svd = True
+                self.svd_step_counter = 0
+            else:
+                self.svd_step_counter += 1
+                if self.svd_step_counter >= self.svd_interval:
+                    apply_svd = True
+                    self.svd_step_counter = 0
+            if apply_svd:
+                compressed = low_rank_svd(last_recurrent_state, n=self.svd_rank)
+                if compressed is not None:
+                    last_recurrent_state = compressed
 
         # Update cache
         if cache_params is not None:
