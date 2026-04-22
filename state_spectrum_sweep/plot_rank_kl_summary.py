@@ -194,25 +194,36 @@ def main() -> None:
         "p99.9": "#e7298a",
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
-    _plot_method(axes[0], low_rank_runs, "Qwen Low-Rank KL vs Rank", colors)
-    _plot_method(axes[1], quant_runs, "Qwen Quant KL vs Bits", colors)
-    fig.suptitle("Qwen KL Percentiles Across Experiment Settings")
+    # fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
+    # _plot_method(axes[0], low_rank_runs, "Qwen Low-Rank KL vs Rank", colors)
+    # _plot_method(axes[1], quant_runs, "Qwen Quant KL vs Bits", colors)
+    # fig.suptitle("Qwen KL Percentiles Across Experiment Settings")
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    _plot_method(ax, low_rank_runs, "Qwen Low-Rank KL vs Rank", colors)
+    fig.suptitle("Qwen Low-Rank KL Percentiles Across Rank Settings")
     fig.tight_layout()
     fig.savefig(output_path, dpi=180, bbox_inches="tight")
 
     print(f"Saved plot to {output_path}")
-    for method, runs in (("low_rank", low_rank_runs), ("quant", quant_runs)):
-        if not runs:
-            print(f"{method}: no runs found")
-            continue
-        print(f"{method}:")
-        for run in runs:
-            metrics = ", ".join(f"{k}={v:.6g}" for k, v in run.values.items())
-            print(
-                f"  x={run.x_value:g} prompts={run.prompt_count} "
-                f"dir={run.run_dir.name} :: {metrics}"
-            )
+    # for method, runs in (("low_rank", low_rank_runs), ("quant", quant_runs)):
+    #     if not runs:
+    #         print(f"{method}: no runs found")
+    #         continue
+    #     print(f"{method}:")
+    #     for run in runs:
+    #         metrics = ", ".join(f"{k}={v:.6g}" for k, v in run.values.items())
+    #         print(
+    #             f"  x={run.x_value:g} prompts={run.prompt_count} "
+    #             f"dir={run.run_dir.name} :: {metrics}"
+    #         )
+    print("low_rank:")
+    for run in low_rank_runs:
+        metrics = ", ".join(f"{k}={v:.6g}" for k, v in run.values.items())
+        print(
+            f"  x={run.x_value:g} prompts={run.prompt_count} "
+            f"dir={run.run_dir.name} :: {metrics}"
+        )
+
 
 
 if __name__ == "__main__":

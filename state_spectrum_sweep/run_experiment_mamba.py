@@ -264,6 +264,24 @@ class CacheTensorView:
     path: TensorPath
     tensor: torch.Tensor
 
+STRICT_SSM_FIELD_NAMES = {
+    "mamba_state",
+    "mamba_states",
+    "recurrent_state",
+    "recurrent_states",
+    "ssm_state",
+    "ssm_states",
+}
+STRICT_CONV_FIELD_NAMES = {
+    "conv_state",
+    "conv_states",
+}
+STRICT_ATTN_FIELD_NAMES = {
+    "attention",
+    "attn",
+    "key_cache",
+    "value_cache",
+}
 
 def _iter_object_members(obj: Any) -> Iterable[tuple[Any, Any]]:
     if isinstance(obj, dict):
@@ -362,25 +380,95 @@ def _set_by_path(obj: Any, path: tuple[Any, ...], value: Any) -> None:
     raise TypeError(f"Cannot mutate tuple-backed cache path: {path}")
 
 
-def _matches_subset(name: str, subset: str) -> bool:
+def _normalized_path_tokens(path: tuple[Any, ...]) -> list[str]:
+    tokens: list[str] = []
+    for part in path:
+        if isinstance(part, str):
+            normalized = (
+                part.lower()
+                .replace("[", "_")
+                .replace("]", "_")
+                .replace(".", "_")
+                .replace("-", "_")
+            )
+            for token in normalized.split("_"):
+                if token:
+                    tokens.append(token)
+    return tokens
+
+def _normalized_path_parts(path: tuple[Any, ...]) -> set[str]:
+    parts: set[str] = set()
+    for part in path:
+        if isinstance(part, str):
+            normalized = (
+                part.lower()
+                .replace("[", "_")
+                .replace("]", "_")
+                .replace(".", "_")
+                .replace("-", "_")
+            )
+            if normalized:
+                parts.add(normalized)
+    return parts
+
+def _extract_layer_index(path: tuple[Any, ...]) -> int | None:
+    for idx, part in enumerate(path[:-1]):
+        if part == "layers":
+            candidate = path[idx + 1]
+            if isinstance(candidate, int):
+                return candidate
+            if isinstance(candidate, str) and candidate.isdigit():
+                return int(candidate)
+    return None
+
+
+def _matches_subset(path: tuple[Any, ...], name: str, subset: str, *, strict_ssm: bool) -> bool:
     lowered = name.lower()
+    path_tokens = set(_normalized_path_tokens(path))
+    path_parts = _normalized_path_parts(path)
     if subset == "all":
         return True
     if subset == "ssm":
+        if strict_ssm:
+            return bool(path_parts & STRICT_SSM_FIELD_NAMES)
         return "ssm" in lowered or "state" in lowered
     if subset == "conv":
+        if strict_ssm:
+            return bool(path_parts & STRICT_CONV_FIELD_NAMES)
         return "conv" in lowered
+    if subset == "attn":
+        if strict_ssm:
+            return bool(path_parts & STRICT_ATTN_FIELD_NAMES)
+        attention_tokens = ("attn", "attention", "key_cache", "value_cache", "key", "value")
+        return any(token in lowered for token in attention_tokens)
     if subset == "auto":
+        if strict_ssm:
+            return bool(path_parts & (STRICT_SSM_FIELD_NAMES | STRICT_CONV_FIELD_NAMES))
         return any(token in lowered for token in ("ssm", "conv", "recurrent", "state"))
     raise ValueError(f"Unsupported subset: {subset}")
 
 
-def extract_cache_tensors(cache_obj: Any, subset: str) -> list[CacheTensorView]:
+def extract_cache_tensors(
+    cache_obj: Any,
+    subset: str,
+    *,
+    strict_ssm: bool = False,
+    target_layer: int | None = None,
+) -> list[CacheTensorView]:
     views = _walk_tensor_leaves(cache_obj)
-    filtered = [view for view in views if _matches_subset(view.path.name, subset)]
+    filtered = [
+        view
+        for view in views
+        if _matches_subset(view.path.path, view.path.name, subset, strict_ssm=strict_ssm)
+    ]
+    if target_layer is not None:
+        filtered = [
+            view for view in filtered
+            if _extract_layer_index(view.path.path) == target_layer
+        ]
     if filtered:
         return filtered
-    if subset == "auto":
+    if subset == "auto" and target_layer is None:
         return views
     return filtered
 
@@ -669,6 +757,9 @@ def run_single_prompt(
     *,
     experiment: str,
     subset: str,
+    strict_ssm: bool,
+    target_layer: int | None,
+    generate_from: str,
     low_rank_rank: int,
     quant_bits: int,
     max_new_tokens: int,
@@ -681,7 +772,15 @@ def run_single_prompt(
     logits, cache_obj = backend.prefill(input_ids, max_new_tokens=max_new_tokens)
     prefill_elapsed = perf_counter() - prefill_start
 
-    current_views = extract_cache_tensors(cache_obj, subset=subset)
+    baseline_cache = cache_obj
+    active_cache = cache_obj
+
+    current_views = extract_cache_tensors(
+        active_cache,
+        subset=subset,
+        strict_ssm=strict_ssm,
+        target_layer=target_layer,
+    )
     if not current_views:
         raise ValueError(
             "No cache tensors matched the requested subset. Try `--inspect-cache` or `--subset all`."
@@ -737,10 +836,15 @@ def run_single_prompt(
                 break
 
             generated_ids.append(int(token_in.item()))
-            current_views = extract_cache_tensors(cache_obj, subset=subset)
+            current_views = extract_cache_tensors(
+                active_cache,
+                subset=subset,
+                strict_ssm=strict_ssm,
+                target_layer=target_layer,
+            )
             transform_start = perf_counter()
             approx_cache, step_metrics = _make_perturbed_cache(
-                cache_obj,
+                active_cache,
                 base_tensors,
                 current_views,
                 experiment=experiment,
@@ -752,8 +856,8 @@ def run_single_prompt(
             print(f"    token {step + 1} state transform: {transform_elapsed:.3f}s")
 
             forward_start = perf_counter()
-            out_logits, updated_cache = backend.step(token_in, cache_obj)
-            approx_logits, _ = backend.step(token_in, approx_cache)
+            out_logits, updated_baseline_cache = backend.step(token_in, baseline_cache)
+            approx_logits, updated_perturbed_cache = backend.step(token_in, approx_cache)
             forward_elapsed = perf_counter() - forward_start
             print(f"    token {step + 1} model forward(s): {forward_elapsed:.3f}s")
 
@@ -770,13 +874,19 @@ def run_single_prompt(
             for key in metric_rows:
                 metric_rows[key].append(step_metrics[key].detach().float().cpu())
 
+            generation_logits = out_logits if generate_from == "baseline" else approx_logits
             next_token = _sample_next_token(
-                out_logits,
+                generation_logits,
                 temperature=SAMPLING_TEMPERATURE,
                 top_p=SAMPLING_TOP_P,
                 top_k=SAMPLING_TOP_K,
             )
-            cache_obj = updated_cache
+            baseline_cache = updated_baseline_cache
+            active_cache = (
+                updated_baseline_cache
+                if generate_from == "baseline"
+                else updated_perturbed_cache
+            )
             step += 1
 
     response = ""
@@ -795,11 +905,22 @@ def run_single_prompt(
         "state_tensor_names": [".".join(str(p) for p in path) for path in base_tensors],
         "experiment": experiment,
         "subset": subset,
+        "strict_ssm": strict_ssm,
+        "target_layer": target_layer,
+        "generate_from": generate_from,
     }
     return torch.tensor(kl_list, dtype=torch.float32), metrics, response, prompt_len, meta
 
 
-def inspect_cache(prompt: str, backend: BaseBackend, max_new_tokens: int, subset: str) -> None:
+def inspect_cache(
+    prompt: str,
+    backend: BaseBackend,
+    max_new_tokens: int,
+    subset: str,
+    *,
+    strict_ssm: bool = False,
+    target_layer: int | None = None,
+) -> None:
     input_ids = backend.prepare_prompt(prompt)
     _, cache_obj = backend.prefill(input_ids, max_new_tokens=max_new_tokens)
     print(f"Cache object type: {type(cache_obj)}")
@@ -807,15 +928,28 @@ def inspect_cache(prompt: str, backend: BaseBackend, max_new_tokens: int, subset
         print(f"Cache object fields: {sorted(vars(cache_obj).keys())}")
     elif isinstance(cache_obj, dict):
         print(f"Cache dict keys: {sorted(cache_obj.keys())}")
-    all_views = extract_cache_tensors(cache_obj, subset="all")
-    filtered_views = extract_cache_tensors(cache_obj, subset=subset)
+    all_views = extract_cache_tensors(cache_obj, subset="all", strict_ssm=strict_ssm)
+    filtered_views = extract_cache_tensors(
+        cache_obj,
+        subset=subset,
+        strict_ssm=strict_ssm,
+        target_layer=target_layer,
+    )
     print(f"All tensor leaves found: {len(all_views)}")
     for view in all_views:
-        print(f"  {view.path.name}: shape={tuple(view.tensor.shape)} dtype={view.tensor.dtype}")
+        layer_idx = _extract_layer_index(view.path.path)
+        layer_label = f" layer={layer_idx}" if layer_idx is not None else ""
+        print(
+            f"  {view.path.name}: shape={tuple(view.tensor.shape)} dtype={view.tensor.dtype}{layer_label}"
+        )
     print()
     print(f"Subset `{subset}` matched: {len(filtered_views)}")
     for view in filtered_views:
-        print(f"  {view.path.name}: shape={tuple(view.tensor.shape)} dtype={view.tensor.dtype}")
+        layer_idx = _extract_layer_index(view.path.path)
+        layer_label = f" layer={layer_idx}" if layer_idx is not None else ""
+        print(
+            f"  {view.path.name}: shape={tuple(view.tensor.shape)} dtype={view.tensor.dtype}{layer_label}"
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -826,7 +960,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", default="")
     parser.add_argument("--prompt-limit", type=int, default=0)
     parser.add_argument("--experiment", choices=("low_rank", "quant"), default="low_rank")
-    parser.add_argument("--subset", choices=("auto", "all", "ssm", "conv"), default="auto")
+    parser.add_argument("--subset", choices=("auto", "all", "ssm", "conv", "attn"), default="auto")
+    parser.add_argument(
+        "--target-layer",
+        type=int,
+        default=-1,
+        help="Only perturb cache tensors from this layer index. Default: all matched layers.",
+    )
+    parser.add_argument(
+        "--generate-from",
+        choices=("baseline", "perturbed"),
+        default="baseline",
+        help="Which branch to use for autoregressive generation after the first token.",
+    )
+    parser.add_argument(
+        "--strict-ssm",
+        action="store_true",
+        help="Use strict cache-field matching for the SSM subset.",
+    )
     parser.add_argument("--low-rank-rank", type=int, default=LOW_RANK_RANK)
     parser.add_argument("--quant-bits", type=int, default=QUANT_BITS)
     parser.add_argument("--max-new-tokens", type=int, default=MAX_NEW_TOKENS)
@@ -837,6 +988,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    target_layer = None if args.target_layer < 0 else args.target_layer
     backend = create_backend(
         backend_name=args.backend,
         model_name=args.model,
@@ -851,6 +1003,8 @@ def main() -> None:
             backend,
             max_new_tokens=args.max_new_tokens,
             subset=args.subset,
+            strict_ssm=args.strict_ssm,
+            target_layer=target_layer,
         )
         return
 
@@ -874,6 +1028,9 @@ def main() -> None:
                 backend,
                 experiment=args.experiment,
                 subset=args.subset,
+                strict_ssm=args.strict_ssm,
+                target_layer=target_layer,
+                generate_from=args.generate_from,
                 low_rank_rank=args.low_rank_rank,
                 quant_bits=args.quant_bits,
                 max_new_tokens=args.max_new_tokens,

@@ -349,9 +349,9 @@ def run_single_prompt(
                 [prompt_len + step], device=model_device, dtype=torch.long
             )
 
-            deltas = generate_delta(current_state, original_state)
             svd_start_time = perf_counter()
-            low_rank_deltas = low_rank_svd_list(deltas, n=low_rank_n)
+            current_states = [state for state in current_state if state is not None]
+            low_rank_states = low_rank_svd_list(current_states, n=low_rank_n)
             svd_elapsed_s = perf_counter() - svd_start_time
             print(f"    token {step + 1} low-rank svd: {svd_elapsed_s:.3f}s")
 
@@ -364,7 +364,7 @@ def run_single_prompt(
             for layer_idx in range(num_layers):
                 if current_state[layer_idx] is None:
                     continue
-                approx_state = original_state[layer_idx] + low_rank_deltas[ssm_state_idx]
+                approx_state = low_rank_states[ssm_state_idx]
                 approximated_state[layer_idx] = approx_state
                 current_layer_state = current_state[layer_idx]
                 mse_error.append(F.mse_loss(current_layer_state, approx_state))

@@ -165,14 +165,36 @@ def low_rank_svd_cpu(tensor: torch.Tensor, n: int = 16, oversample: int = 4, nit
     orig_device = tensor.device
     orig_dtype = tensor.dtype
     cpu_tensor = tensor.detach().to(device="cpu", dtype=torch.float32)
-    q = min(n + oversample, min(cpu_tensor.shape[-2:]))
-    u, s, v = torch.svd_lowrank(cpu_tensor, q=q, niter=niter)
-    u, s, v = u[..., :n], s[..., :n], v[..., :n]
-    approx_cpu = (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
+    leading_shape = cpu_tensor.shape[:-2]
+    matrix_shape = cpu_tensor.shape[-2:]
+    flat_tensor = cpu_tensor.reshape(-1, *matrix_shape)
+    approx_list = []
+
+    for matrix in flat_tensor:
+        work_matrix = torch.nan_to_num(matrix, nan=0.0, posinf=0.0, neginf=0.0)
+        if not torch.isfinite(work_matrix).all():
+            work_matrix = torch.zeros_like(work_matrix)
+
+        # Extremely large values can still destabilize the randomized SVD path.
+        work_matrix = work_matrix.clamp(min=-1e6, max=1e6)
+
+        q = min(n + oversample, min(work_matrix.shape[-2:]))
+        try:
+            u, s, v = torch.svd_lowrank(work_matrix, q=q, niter=niter)
+            u, s, v = u[..., :n], s[..., :n], v[..., :n]
+            approx_matrix = (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
+        except RuntimeError:
+            approx_matrix = torch.zeros_like(work_matrix)
+
+        approx_list.append(approx_matrix)
+
+    approx_cpu = torch.stack(approx_list, dim=0).reshape(*leading_shape, *matrix_shape)s
     return approx_cpu.to(device=orig_device, dtype=orig_dtype)
 
 
 def low_rank_svd_list_cpu(lst: list, n: int = 16) -> list:
+    if not lst:
+        return []
     batched_svd = torch.stack(lst, dim=0)
     batched_svd = low_rank_svd_cpu(batched_svd, n=n)
     return list(batched_svd.unbind(dim=0))
@@ -242,6 +264,26 @@ def _forward_with_state_capture(model, cache_cls_or_instance, num_layers: int, *
         lambda: model(**forward_kwargs, use_cache=True, return_dict=True),
     )
 
+def _collect_valid_deltas(current_state, original_state, tracked_layer_indices):
+    valid_layer_indices: list[int] = []
+    deltas: list[torch.Tensor] = []
+
+    for layer_idx in tracked_layer_indices:
+        current_layer_state = current_state[layer_idx]
+        original_layer_state = original_state[layer_idx]
+        if current_layer_state is None or original_layer_state is None:
+            continue
+
+        delta = current_layer_state - original_layer_state
+        if not torch.isfinite(delta).all():
+            continue
+
+        valid_layer_indices.append(layer_idx)
+        deltas.append(delta)
+
+    return valid_layer_indices, deltas
+
+
 
 def run_single_prompt(prompt: str, model, tokenizer, *, low_rank_n: int = LOW_RANK_RANK, max_new_tokens: int = MAX_NEW_TOKENS) -> tuple[torch.Tensor, dict[str, torch.Tensor], str, int, dict]:
     model_device = next(model.parameters()).device
@@ -253,6 +295,8 @@ def run_single_prompt(prompt: str, model, tokenizer, *, low_rank_n: int = LOW_RA
     if not gated_delta_layer_indices:
         raise RuntimeError("No Qwen3_5GatedDeltaNet layers found in the model.")
     num_layers = max(gated_delta_layer_indices) + 1
+    tracked_layer_count = len(gated_delta_layer_indices)
+    tracked_layer_to_col = {layer_idx: col for col, layer_idx in enumerate(gated_delta_layer_indices)}
 
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -309,38 +353,59 @@ def run_single_prompt(prompt: str, model, tokenizer, *, low_rank_n: int = LOW_RA
             generated_ids.append(int(token_in.item()))
             cache_position = torch.tensor([prompt_len + step], device=model_device, dtype=torch.long)
 
-            deltas = generate_delta(current_state, original_state)
+            valid_layer_indices, deltas = _collect_valid_deltas(
+                current_state,
+                original_state,
+                gated_delta_layer_indices,
+            )
+            if not deltas:
+                stopped_reason = "no_valid_recurrent_states"
+                print(f"  token {step + 1} stopped: no valid recurrent deltas")
+                break
+
             svd_start_time = perf_counter()
             low_rank_deltas = low_rank_svd_list_cpu(deltas, n=low_rank_n)
+            if not low_rank_deltas:
+                stopped_reason = "no_valid_recurrent_states"
+                print(f"  token {step + 1} stopped: low-rank SVD received no valid deltas")
+                break
             average_svd_time += perf_counter() - svd_start_time
 
             approximated_state = [_clone_recurrent_state(state) for state in original_state]
-            mse_error: list[torch.Tensor] = []
-            rel_frob_error: list[torch.Tensor] = []
-            cosine_similarity_vals: list[torch.Tensor] = []
-            retained_energy_vals: list[torch.Tensor] = []
-            ssm_state_idx = 0
-            for layer_idx in range(num_layers):
-                if current_state[layer_idx] is None:
-                    continue
+            mse_error = torch.full((tracked_layer_count,), float("nan"), dtype=torch.float32)
+            rel_frob_error = torch.full((tracked_layer_count,), float("nan"), dtype=torch.float32)
+            cosine_similarity_vals = torch.full((tracked_layer_count,), float("nan"), dtype=torch.float32)
+            retained_energy_vals = torch.full((tracked_layer_count,), float("nan"), dtype=torch.float32)
+            valid_metric_count = 0
+            valid_metric_count = 0
+            for ssm_state_idx, layer_idx in enumerate(valid_layer_indices):
                 approx_state = original_state[layer_idx] + low_rank_deltas[ssm_state_idx]
+                if not torch.isfinite(approx_state).all():
+                    continue
                 approximated_state[layer_idx] = approx_state
                 current_layer_state = current_state[layer_idx]
-                mse_error.append(F.mse_loss(current_layer_state, approx_state))
+                col = tracked_layer_to_col[layer_idx]
+                mse_error[col] = F.mse_loss(current_layer_state, approx_state).detach().float().cpu()
                 err = current_layer_state - approx_state
                 current_norm = current_layer_state.norm().clamp_min(1e-12)
-                rel_frob_error.append(err.norm() / current_norm)
-                cosine_similarity_vals.append(F.cosine_similarity(current_layer_state.flatten(), approx_state.flatten(), dim=0))
-                retained_energy_vals.append(1.0 - (err.pow(2).sum() / current_layer_state.pow(2).sum().clamp_min(1e-12)))
-                ssm_state_idx += 1
+                rel_frob_error[col] = (err.norm() / current_norm).detach().float().cpu()
+                cosine_similarity_vals[col] = F.cosine_similarity(
+                    current_layer_state.flatten(), approx_state.flatten(), dim=0
+                ).detach().float().cpu()
+                retained_energy_vals[col] = (
+                    1.0 - (err.pow(2).sum() / current_layer_state.pow(2).sum().clamp_min(1e-12))
+                ).detach().float().cpu()
+                valid_metric_count += 1
 
-            if not mse_error:
-                raise ValueError("No recurrent states were available to compute approximation metrics.")
+            if valid_metric_count == 0:
+                stopped_reason = "no_valid_recurrent_states"
+                print(f"  token {step + 1} stopped: no finite approximation metrics")
+                break
 
-            mse_rows.append(torch.stack(mse_error, dim=0).detach().float().cpu())
-            rel_frob_rows.append(torch.stack(rel_frob_error, dim=0).detach().float().cpu())
-            cosine_rows.append(torch.stack(cosine_similarity_vals, dim=0).detach().float().cpu())
-            retained_energy_rows.append(torch.stack(retained_energy_vals, dim=0).detach().float().cpu())
+            mse_rows.append(mse_error)
+            rel_frob_rows.append(rel_frob_error)
+            cosine_rows.append(cosine_similarity_vals)
+            retained_energy_rows.append(retained_energy_vals)
 
             approximated_cache = copy.deepcopy(past_key_values)
             _inject_recurrent_states(approximated_cache, approximated_state)
@@ -409,6 +474,17 @@ def run_single_prompt(prompt: str, model, tokenizer, *, low_rank_n: int = LOW_RA
 
 
 def _summary_stats(kl: torch.Tensor, metrics: dict[str, torch.Tensor], meta: dict) -> dict:
+    def _nanmean(t: torch.Tensor) -> float:
+        return float(torch.nanmean(t).item())
+
+    def _nanmin(t: torch.Tensor) -> float:
+        finite = t[~torch.isnan(t)]
+        return float(finite.min().item()) if finite.numel() else float("nan")
+
+    def _nanmax(t: torch.Tensor) -> float:
+        finite = t[~torch.isnan(t)]
+        return float(finite.max().item()) if finite.numel() else float("nan")
+    
     out: dict = {
         "prompt_len": meta.get("prompt_len"),
         "num_generated_tokens": meta.get("num_generated_tokens"),
@@ -434,34 +510,34 @@ def _summary_stats(kl: torch.Tensor, metrics: dict[str, torch.Tensor], meta: dic
         out["retained_energy"] = None
         out["per_layer"] = None
     else:
-        per_step_mean = mse.mean(dim=-1)
+        per_step_mean = torch.nanmean(mse, dim=-1)
         out["mse"] = {
-            "mean_over_steps_and_layers": float(mse.mean().item()),
-            "mean_over_steps_of_layer_mean": float(per_step_mean.mean().item()),
-            "min_over_steps_of_layer_mean": float(per_step_mean.min().item()),
-            "max_over_steps_of_layer_mean": float(per_step_mean.max().item()),
+            "mean_over_steps_and_layers": _nanmean(mse),
+            "mean_over_steps_of_layer_mean": _nanmean(per_step_mean),
+            "min_over_steps_of_layer_mean": _nanmin(per_step_mean),
+            "max_over_steps_of_layer_mean": _nanmax(per_step_mean),
         }
         out["relative_frobenius_error"] = {
-            "mean_over_steps_and_layers": float(rel_frob.mean().item()),
-            "min": float(rel_frob.min().item()),
-            "max": float(rel_frob.max().item()),
+            "mean_over_steps_and_layers": _nanmean(rel_frob),
+            "min": _nanmin(rel_frob),
+            "max": _nanmax(rel_frob),
         }
         out["cosine_similarity"] = {
-            "mean_over_steps_and_layers": float(cosine_similarity.mean().item()),
-            "min": float(cosine_similarity.min().item()),
-            "max": float(cosine_similarity.max().item()),
+            "mean_over_steps_and_layers": _nanmean(cosine_similarity),
+            "min": _nanmin(cosine_similarity),
+            "max": _nanmax(cosine_similarity),
         }
         out["retained_energy"] = {
-            "mean_over_steps_and_layers": float(retained_energy.mean().item()),
-            "min": float(retained_energy.min().item()),
-            "max": float(retained_energy.max().item()),
+            "mean_over_steps_and_layers": _nanmean(retained_energy),
+            "min": _nanmin(retained_energy),
+            "max": _nanmax(retained_energy),
         }
         out["per_layer"] = {
-            "mean_mse": [float(x) for x in mse.mean(dim=0).tolist()],
-            "max_mse": [float(x) for x in mse.max(dim=0).values.tolist()],
-            "mean_relative_frobenius_error": [float(x) for x in rel_frob.mean(dim=0).tolist()],
-            "mean_cosine_similarity": [float(x) for x in cosine_similarity.mean(dim=0).tolist()],
-            "mean_retained_energy": [float(x) for x in retained_energy.mean(dim=0).tolist()],
+            "mean_mse": [float(x) for x in torch.nanmean(mse, dim=0).tolist()],
+            "max_mse": [float(_nanmax(mse[:, i])) for i in range(mse.shape[1])],
+            "mean_relative_frobenius_error": [float(x) for x in torch.nanmean(rel_frob, dim=0).tolist()],
+            "mean_cosine_similarity": [float(x) for x in torch.nanmean(cosine_similarity, dim=0).tolist()],
+            "mean_retained_energy": [float(x) for x in torch.nanmean(retained_energy, dim=0).tolist()],
         }
     return out
 
