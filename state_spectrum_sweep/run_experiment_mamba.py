@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import inspect
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -542,6 +543,10 @@ class BaseBackend:
 
 
 class HuggingFaceBackend(BaseBackend):
+    def __init__(self, model_name: str, tokenizer_name: str, dtype: torch.dtype) -> None:
+        super().__init__(model_name, tokenizer_name, dtype)
+        self.cache_arg_name = "past_key_values"
+
     def load(self) -> None:
         AutoModelForCausalLM, _ = _require_transformers()
         self.tokenizer = _load_tokenizer(self.tokenizer_name or self.model_name)
@@ -553,6 +558,15 @@ class HuggingFaceBackend(BaseBackend):
         if self.device != "cuda":
             self.model.to(self.device)
         self.device = str(_resolve_hf_input_device(self.model))
+        forward_params = inspect.signature(self.model.forward).parameters
+        if "past_key_values" in forward_params:
+            self.cache_arg_name = "past_key_values"
+        elif "cache_params" in forward_params:
+            self.cache_arg_name = "cache_params"
+        else:
+            raise ValueError(
+                "Model forward signature exposes neither `past_key_values` nor `cache_params`."
+            )
     
     def prepare_prompt(self, prompt: str) -> torch.Tensor:
         if self.tokenizer is None or self.model is None:
@@ -577,9 +591,9 @@ class HuggingFaceBackend(BaseBackend):
     def step(self, input_ids: torch.Tensor, cache_obj: Any) -> tuple[torch.Tensor, Any]:
         output = self.model(
             input_ids=input_ids,
-            cache_params=cache_obj,
             use_cache=True,
             return_dict=True,
+            **{self.cache_arg_name: cache_obj},
         )
         return output.logits, self._extract_cache(output)
 
