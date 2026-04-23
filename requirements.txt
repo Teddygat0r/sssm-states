@@ -1,0 +1,21 @@
+# Core ML stack.
+# torch must match your CUDA; install with e.g.
+#   uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   cuda cu12.8 required because no wheels compiled for causal conv1d above.
+torch>=2.10,<2.11
+transformers>=5.5,<6
+accelerate>=1.13
+huggingface_hub>=1.11
+tokenizers>=0.22
+safetensors>=0.7
+
+# Utilities
+tqdm>=4.67
+einops>=0.8
+numpy>=2.0
+
+flash-linear-attention
+# causal-conv1d ; install wheel from github.
+
+# Optional long-context attention kernel; requires matching CUDA+torch wheel.
+# flash-attn-3>=3.0
