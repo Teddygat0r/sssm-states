@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 from huggingface_hub import hf_hub_download
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, set_seed
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = REPO_ROOT / "models"
@@ -41,7 +41,10 @@ def load_model_and_tokenizer(model_key, svd_rank=None, svd_interval=1024):
     if "qwen3.5" in model_key:
         from modeling_qwen3_5_moe import Qwen3_5MoeForCausalLM
         model = Qwen3_5MoeForCausalLM.from_pretrained(
-            path, torch_dtype=torch.bfloat16, device_map="auto"
+            path,
+            torch_dtype=torch.bfloat16,
+            device_map="balanced",
+            attn_implementation="sdpa",
         ).eval()
         if svd_rank is not None:
             for layer in model.model.layers:
@@ -93,6 +96,32 @@ def query_llm(prompt, model, tokenizer, max_new_tokens, temperature):
         out = model.generate(**inputs, **gen_kwargs)
     gen = out[0][inputs.input_ids.shape[1]:]
     return tokenizer.decode(gen, skip_special_tokens=True)
+
+
+def query_llm_batch(prompts, model, tokenizer, max_new_tokens, temperature):
+    chats = [
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": p}], tokenize=False, add_generation_prompt=True
+        )
+        for p in prompts
+    ]
+    prev_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    try:
+        inputs = tokenizer(chats, return_tensors="pt", padding=True).to(model.device)
+    finally:
+        tokenizer.padding_side = prev_side
+    do_sample = temperature > 0
+    gen_kwargs = dict(max_new_tokens=max_new_tokens, do_sample=do_sample)
+    if do_sample:
+        gen_kwargs["temperature"] = temperature
+    with torch.inference_mode():
+        out = model.generate(**inputs, **gen_kwargs)
+    prompt_len = inputs.input_ids.shape[1]
+    gens = out[:, prompt_len:]
+    return [tokenizer.decode(g, skip_special_tokens=True) for g in gens]
 
 
 def extract_answer(response):
@@ -160,56 +189,92 @@ def run(args):
         args.model, svd_rank=args.svd_rank, svd_interval=args.svd_interval
     )
     max_len = maxlen_map[args.model]
+    if args.max_input_len is not None:
+        max_len = min(max_len, args.max_input_len)
+
+    def _pick_template(_args):
+        if _args.rag > 0:
+            return template_rag
+        if _args.no_context:
+            return template_no_context
+        if _args.cot:
+            return template_0shot_cot
+        return template_0shot
+
+    def _item_context(item):
+        if args.rag > 0:
+            retrieved = item.get("retrieved_context", [])[: args.rag]
+            retrieved = sorted(retrieved, key=lambda x: x["c_idx"])
+            return "\n\n".join(
+                f"Retrieved chunk {i+1}: {x['content']}" for i, x in enumerate(retrieved)
+            )
+        return item["context"]
+
+    template = _pick_template(args)
 
     with open(out_file, "a", encoding="utf-8") as fout:
-        for item in tqdm(data):
-            t0 = time.perf_counter()
-            context = item["context"]
-            if args.rag > 0:
-                retrieved = item.get("retrieved_context", [])[: args.rag]
-                retrieved = sorted(retrieved, key=lambda x: x["c_idx"])
-                context = "\n\n".join(
-                    f"Retrieved chunk {i+1}: {x['content']}" for i, x in enumerate(retrieved)
-                )
-                template = template_rag
-            elif args.no_context:
-                template = template_no_context
-            elif args.cot:
-                template = template_0shot_cot
-            else:
-                template = template_0shot
+        if args.cot or args.batch_size <= 1:
+            for idx, item in enumerate(tqdm(data)):
+                if args.seed is not None:
+                    set_seed(args.seed + idx)
+                t0 = time.perf_counter()
+                context = _item_context(item)
+                prompt = build_prompt(item, context, template)
+                prompt = middle_truncate(prompt, tokenizer, max_len)
 
-            prompt = build_prompt(item, context, template)
-            prompt = middle_truncate(prompt, tokenizer, max_len)
+                if args.cot:
+                    cot_out = query_llm(prompt, model, tokenizer, max_new_tokens=1024, temperature=0.1)
+                    cot_out = strip_thinking(cot_out).strip()
+                    item["response_cot"] = cot_out
+                    ans_prompt = (
+                        template_0shot_cot_ans
+                        .replace("$DOC$", context.strip())
+                        .replace("$Q$", item["question"].strip())
+                        .replace("$C_A$", item["choice_A"].strip())
+                        .replace("$C_B$", item["choice_B"].strip())
+                        .replace("$C_C$", item["choice_C"].strip())
+                        .replace("$C_D$", item["choice_D"].strip())
+                        .replace("$COT$", cot_out)
+                    )
+                    ans_prompt = middle_truncate(ans_prompt, tokenizer, max_len)
+                    raw = query_llm(ans_prompt, model, tokenizer, max_new_tokens=args.max_gen, temperature=0.1)
+                else:
+                    raw = query_llm(prompt, model, tokenizer, max_new_tokens=args.max_gen, temperature=0.1)
 
-            if args.cot:
-                cot_out = query_llm(prompt, model, tokenizer, max_new_tokens=1024, temperature=0.1)
-                cot_out = strip_thinking(cot_out).strip()
-                item["response_cot"] = cot_out
-                ans_prompt = (
-                    template_0shot_cot_ans
-                    .replace("$DOC$", context.strip())
-                    .replace("$Q$", item["question"].strip())
-                    .replace("$C_A$", item["choice_A"].strip())
-                    .replace("$C_B$", item["choice_B"].strip())
-                    .replace("$C_C$", item["choice_C"].strip())
-                    .replace("$C_D$", item["choice_D"].strip())
-                    .replace("$COT$", cot_out)
-                )
-                ans_prompt = middle_truncate(ans_prompt, tokenizer, max_len)
-                raw = query_llm(ans_prompt, model, tokenizer, max_new_tokens=args.max_gen, temperature=0.1)
-            else:
-                raw = query_llm(prompt, model, tokenizer, max_new_tokens=args.max_gen, temperature=0.1)
-
-            response = strip_thinking(raw).strip()
-            item["response_raw"] = raw
-            item["response"] = response
-            item["pred"] = extract_answer(response)
-            item["judge"] = item["pred"] == item["answer"]
-            item["context"] = context[:1000]
-            item["elapsed_seconds"] = time.perf_counter() - t0
-            fout.write(json.dumps(item, ensure_ascii=False) + "\n")
-            fout.flush()
+                response = strip_thinking(raw).strip()
+                item["response_raw"] = raw
+                item["response"] = response
+                item["pred"] = extract_answer(response)
+                item["judge"] = item["pred"] == item["answer"]
+                item["context"] = context[:1000]
+                item["elapsed_seconds"] = time.perf_counter() - t0
+                fout.write(json.dumps(item, ensure_ascii=False) + "\n")
+                fout.flush()
+        else:
+            for batch_start in tqdm(range(0, len(data), args.batch_size)):
+                if args.seed is not None:
+                    set_seed(args.seed + batch_start)
+                batch = data[batch_start : batch_start + args.batch_size]
+                contexts = [_item_context(it) for it in batch]
+                prompts = [
+                    middle_truncate(build_prompt(it, c, template), tokenizer, max_len)
+                    for it, c in zip(batch, contexts)
+                ]
+                t0 = time.perf_counter()
+                raws = query_llm_batch(prompts, model, tokenizer, args.max_gen, 0.1)
+                batch_elapsed = time.perf_counter() - t0
+                per_item = batch_elapsed / len(batch)
+                for item, ctx, raw in zip(batch, contexts, raws):
+                    response = strip_thinking(raw).strip()
+                    item["response_raw"] = raw
+                    item["response"] = response
+                    item["pred"] = extract_answer(response)
+                    item["judge"] = item["pred"] == item["answer"]
+                    item["context"] = ctx[:1000]
+                    item["elapsed_seconds"] = per_item
+                    item["batch_size"] = len(batch)
+                    fout.write(json.dumps(item, ensure_ascii=False) + "\n")
+                    fout.flush()
 
 
 if __name__ == "__main__":
@@ -225,5 +290,8 @@ if __name__ == "__main__":
     parser.add_argument("--length", type=str, default=None, choices=[None, "short", "medium", "long"])
     parser.add_argument("--svd_rank", type=int, default=None, help="Low-rank k for GatedDeltaNet SVD compression (None disables).")
     parser.add_argument("--svd_interval", type=int, default=1024, help="Decode tokens between SVD compressions.")
+    parser.add_argument("--batch_size", type=int, default=1, help="Samples per model.generate() call (non-cot path only).")
+    parser.add_argument("--max_input_len", type=int, default=None, help="Cap input tokens (overrides maxlen_map if smaller).")
+    parser.add_argument("--seed", type=int, default=None, help="If set, re-seed RNG before each batch/item for reproducibility.")
     args = parser.parse_args()
     run(args)
