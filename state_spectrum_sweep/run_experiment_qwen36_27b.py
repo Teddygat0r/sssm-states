@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -40,9 +41,11 @@ from state_spectrum_sweep.run_experiment_kl import (
 
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen3.6-27B")
 GGUF_FILE = os.getenv("GGUF_FILE")
-LOW_RANK_RANK = int(os.getenv("LOW_RANK_RANK", "16"))
-MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "200"))
-PROMPTS_LIMIT = int(os.getenv("PROMPTS_LIMIT", "0"))
+LOW_RANK_RANK = int(os.getenv("LOW_RANK_RANK", "64"))
+SEED = int(os.getenv("SEED", "1234"))
+SVD_NITER = int(os.getenv("SVD_NITER", "4"))
+MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "100"))
+PROMPTS_LIMIT = int(os.getenv("PROMPTS_LIMIT", "10"))
 EXPERIMENTS_ROOT = Path(__file__).parent / "experiments"
 
 
@@ -69,6 +72,11 @@ def _resolve_dtype() -> torch.dtype:
 
 DTYPE = _resolve_dtype()
 
+def _set_seed(seed: int) -> None:
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 def _build_load_kwargs() -> dict:
     load_kwargs = {
@@ -99,6 +107,7 @@ def _run_name() -> str:
 
 
 def main():
+    _set_seed(SEED)
     run_dir = EXPERIMENTS_ROOT / _run_name()
     run_dir.mkdir(parents=True, exist_ok=False)
 
@@ -116,7 +125,9 @@ def main():
             "weights during load."
         )
     print(f"Torch dtype: {DTYPE}")
+    print(f"Seed: {SEED}")
     print(f"Low-rank rank: {LOW_RANK_RANK}")
+    print(f"SVD niter: {SVD_NITER}")
     print(f"Max new tokens: {MAX_NEW_TOKENS}")
     print(f"Saving outputs to: {run_dir}")
 
@@ -125,6 +136,8 @@ def main():
         "gguf_file": GGUF_FILE,
         "rank": LOW_RANK_RANK,
         "low_rank_rank": LOW_RANK_RANK,
+        "seed": SEED,
+        "svd_niter": SVD_NITER,
         "max_new_tokens": MAX_NEW_TOKENS,
         "prompts_limit": PROMPTS_LIMIT,
         "torch_dtype": str(DTYPE),

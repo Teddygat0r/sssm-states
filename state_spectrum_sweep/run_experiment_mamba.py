@@ -230,7 +230,7 @@ def _sample_next_token(
     return next_token
 
 
-def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
+def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 4):
     if tensor.dim() < 2:
         raise ValueError(f"SVD expects tensor rank >= 2, got shape {tuple(tensor.shape)}")
     work_tensor = tensor.float()
@@ -472,6 +472,53 @@ def extract_cache_tensors(
     if subset == "auto" and target_layer is None:
         return views
     return filtered
+
+def _native_mamba2_slot(path: tuple[Any, ...]) -> int | None:
+    if len(path) != 3:
+        return None
+    root, layer_idx, slot_idx = path
+    if root != "key_value_memory_dict":
+        return None
+    if not isinstance(layer_idx, int):
+        return None
+    if not isinstance(slot_idx, int):
+        return None
+    return slot_idx
+
+
+def _select_native_mamba2_slot_one_views(
+    views: list[CacheTensorView],
+    *,
+    subset: str,
+    target_layer: int | None,
+) -> list[CacheTensorView]:
+    slot_views: list[tuple[int, CacheTensorView]] = []
+    seen_slots: set[int] = set()
+    invalid_paths: list[str] = []
+    for view in views:
+        slot = _native_mamba2_slot(view.path.path)
+        if slot is None:
+            invalid_paths.append(view.path.name)
+            continue
+        seen_slots.add(slot)
+        slot_views.append((slot, view))
+
+    if invalid_paths or 0 not in seen_slots or 1 not in seen_slots:
+        subset_desc = f"subset={subset!r}"
+        layer_desc = "all layers" if target_layer is None else f"layer={target_layer}"
+        details = []
+        if invalid_paths:
+            details.append(f"unexpected paths: {', '.join(invalid_paths[:4])}")
+        if 0 not in seen_slots or 1 not in seen_slots:
+            details.append(f"observed slots: {sorted(seen_slots)}")
+        detail_text = "; ".join(details) if details else "slot layout missing"
+        raise ValueError(
+            "Native Mamba2 slot filtering expected cache paths like "
+            "`key_value_memory_dict.<layer>.0` and `.1`, but the matched tensors did not "
+            f"fit that layout ({subset_desc}, {layer_desc}; {detail_text})."
+        )
+
+    return [view for slot, view in slot_views if slot == 1]
 
 def _clone_cache_obj(obj: Any) -> Any:
     if torch.is_tensor(obj):
@@ -795,6 +842,12 @@ def run_single_prompt(
         strict_ssm=strict_ssm,
         target_layer=target_layer,
     )
+    if _is_native_mamba2_backend(backend):
+        current_views = _select_native_mamba2_slot_one_views(
+            current_views,
+            subset=subset,
+            target_layer=target_layer,
+        )
     if not current_views:
         raise ValueError(
             "No cache tensors matched the requested subset. Try `--inspect-cache` or `--subset all`."
@@ -856,6 +909,12 @@ def run_single_prompt(
                 strict_ssm=strict_ssm,
                 target_layer=target_layer,
             )
+            if _is_native_mamba2_backend(backend):
+                current_views = _select_native_mamba2_slot_one_views(
+                    current_views,
+                    subset=subset,
+                    target_layer=target_layer,
+                )
             transform_start = perf_counter()
             approx_cache, step_metrics = _make_perturbed_cache(
                 active_cache,
@@ -949,6 +1008,12 @@ def inspect_cache(
         strict_ssm=strict_ssm,
         target_layer=target_layer,
     )
+    if _is_native_mamba2_backend(backend):
+        filtered_views = _select_native_mamba2_slot_one_views(
+            filtered_views,
+            subset=subset,
+            target_layer=target_layer,
+        )
     print(f"All tensor leaves found: {len(all_views)}")
     for view in all_views:
         layer_idx = _extract_layer_index(view.path.path)

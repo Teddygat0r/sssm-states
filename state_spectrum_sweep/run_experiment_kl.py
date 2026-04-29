@@ -15,6 +15,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
 
 MODEL_NAME = "Qwen/Qwen3.5-4B"
 LOW_RANK_RANK = int(os.getenv("LOW_RANK_RANK", "16"))
+SVD_NITER = int(os.getenv("SVD_NITER", "1"))
 MAX_NEW_TOKENS = 200
 SAMPLING_TEMPERATURE = 0.7
 SAMPLING_TOP_P = 0.8
@@ -177,16 +178,21 @@ def generate_delta(state, state_ref):
     raise TypeError(f"Unsupported state type for delta: {type(state)}")
 
 
-def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
+def low_rank_svd(
+    tensor: torch.Tensor,
+    n: int = 16,
+    oversample: int = 4,
+    niter: int = SVD_NITER,
+):
     q = min(n + oversample, min(tensor.shape[-2:]))
     u, s, v = torch.svd_lowrank(tensor, q=q, niter=niter)
     u, s, v = u[..., :n], s[..., :n], v[..., :n]
     return (u * s.unsqueeze(-2)) @ v.transpose(-2, -1)
 
 
-def low_rank_svd_list(lst: list, n: int = 16) -> list:
+def low_rank_svd_list(lst: list, n: int = 16, niter: int = SVD_NITER) -> list:
     batch = torch.stack(lst, dim=0)
-    batch = low_rank_svd(batch, n)
+    batch = low_rank_svd(batch, n=n, niter=niter)
     return list(batch.unbind(dim=0))
 
 
@@ -351,7 +357,11 @@ def run_single_prompt(
 
             svd_start_time = perf_counter()
             current_states = [state for state in current_state if state is not None]
-            low_rank_states = low_rank_svd_list(current_states, n=low_rank_n)
+            low_rank_states = low_rank_svd_list(
+                current_states,
+                n=low_rank_n,
+                niter=SVD_NITER,
+            )
             svd_elapsed_s = perf_counter() - svd_start_time
             print(f"    token {step + 1} low-rank svd: {svd_elapsed_s:.3f}s")
 
