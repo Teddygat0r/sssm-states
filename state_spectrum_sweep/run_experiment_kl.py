@@ -637,9 +637,24 @@ def inspect_recurrent_cache(
         "cache_type": str(type(past_key_values)),
     }
 
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run recurrent-state KL experiments for Qwen3.5-4B."
+    )
+    parser.add_argument(
+        "--inspect-cache",
+        action="store_true",
+        help="Inspect the captured recurrent cache/state for a single prompt and exit.",
+    )
+    parser.add_argument(
+        "--inspect-prompt",
+        default=PROMPT_SUITE[0],
+        help="Prompt to use for cache inspection. Default: first suite prompt.",
+    )
+    return parser
+
 def main():
-    run_dir = EXPERIMENTS_ROOT / datetime.now().strftime("suite_kl_%Y%m%d_%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=False)
+    args = _build_parser().parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(
@@ -647,6 +662,19 @@ def main():
         torch_dtype=DTYPE,
         device_map="auto",
     )
+
+    if args.inspect_cache:
+        print(f"Inspecting recurrent cache for: {MODEL_NAME}")
+        print(f"Torch dtype: {DTYPE}")
+        inspect_recurrent_cache(
+            prompt=args.inspect_prompt,
+            model=model,
+            tokenizer=tokenizer,
+        )
+        return
+
+    run_dir = EXPERIMENTS_ROOT / datetime.now().strftime("suite_kl_%Y%m%d_%H%M%S")
+    run_dir.mkdir(parents=True, exist_ok=False)
 
     print(f"Running KL suite with {len(PROMPT_SUITE)} prompts")
     print(f"Saving outputs to: {run_dir}")
