@@ -545,6 +545,97 @@ def _summary_stats(kl: torch.Tensor, metrics: dict[str, torch.Tensor], meta: dic
         }
     return out
 
+def inspect_recurrent_cache(
+    prompt: str,
+    model,
+    tokenizer,
+) -> dict:
+    model_device = next(model.parameters()).device
+    gated_delta_layer_indices = sorted(
+        idx
+        for idx in (
+            _extract_layer_index_from_name(name)
+            for name, module in model.named_modules()
+            if isinstance(module, Qwen3_5GatedDeltaNet)
+        )
+        if idx is not None
+    )
+    if not gated_delta_layer_indices:
+        raise RuntimeError("No Qwen3_5GatedDeltaNet layers found in the model.")
+    num_layers = max(gated_delta_layer_indices) + 1
+
+    messages = [{"role": "user", "content": prompt}]
+    text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    model_inputs = tokenizer([text], return_tensors="pt").to(model_device)
+
+    with torch.inference_mode():
+        out = model(
+            **model_inputs,
+            use_cache=True,
+            return_dict=True,
+        )
+        past_key_values = out.past_key_values
+        if past_key_values is None:
+            raise ValueError("Model returned no past_key_values during cache inspection.")
+        cache_cls = type(past_key_values)
+
+        out, original_state = _forward_with_state_capture(
+            model,
+            cache_cls,
+            num_layers,
+            **model_inputs,
+        )
+        past_key_values = out.past_key_values
+        if past_key_values is None:
+            raise ValueError("Model returned no past_key_values on captured prompt forward.")
+
+    non_null_states = [
+        (layer_idx, state)
+        for layer_idx, state in enumerate(original_state)
+        if state is not None
+    ]
+    if not non_null_states:
+        raise ValueError("Could not capture recurrent states from the model cache.")
+
+    hf_device_map = getattr(model, "hf_device_map", None)
+    print(f"Prompt: {prompt}")
+    print(f"Prompt token count: {int(model_inputs.input_ids.shape[1])}")
+    print(f"Cache object type: {type(past_key_values)}")
+    if hasattr(past_key_values, "__dict__"):
+        print(f"Cache object fields: {sorted(vars(past_key_values).keys())}")
+    if hf_device_map:
+        unique_devices = sorted({str(device_name) for device_name in hf_device_map.values()})
+        print(f"hf_device_map devices: {unique_devices}")
+
+    print(f"Captured recurrent-state layers: {len(non_null_states)} / {num_layers}")
+    for layer_idx, state in non_null_states:
+        if isinstance(state, torch.Tensor):
+            print(
+                "  "
+                f"layer {layer_idx}: tensor "
+                f"shape={tuple(state.shape)} dtype={state.dtype} device={state.device}"
+            )
+        elif isinstance(state, list):
+            parts = []
+            for part_idx, part in enumerate(state):
+                if part is None:
+                    parts.append(f"{part_idx}:None")
+                else:
+                    parts.append(
+                        f"{part_idx}:shape={tuple(part.shape)} dtype={part.dtype} device={part.device}"
+                    )
+            print(f"  layer {layer_idx}: list[{len(state)}] " + "; ".join(parts))
+        else:
+            print(f"  layer {layer_idx}: unsupported state type {type(state)}")
+
+    return {
+        "prompt_len": int(model_inputs.input_ids.shape[1]),
+        "num_layers": num_layers,
+        "captured_layers": len(non_null_states),
+        "cache_type": str(type(past_key_values)),
+    }
 
 def main():
     run_dir = EXPERIMENTS_ROOT / datetime.now().strftime("suite_kl_%Y%m%d_%H%M%S")

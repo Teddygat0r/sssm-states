@@ -23,6 +23,7 @@ experiment script.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import random
@@ -35,6 +36,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from state_spectrum_sweep.run_experiment_kl import (
     PROMPT_SUITE,
     _summary_stats,
+    inspect_recurrent_cache,
     run_single_prompt,
 )
 
@@ -105,14 +107,42 @@ def _run_name() -> str:
         f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
 
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run low-rank recurrent-state experiments for Qwen3.6-27B."
+    )
+    parser.add_argument(
+        "--inspect-cache",
+        action="store_true",
+        help="Inspect the captured recurrent cache/state for a single prompt and exit.",
+    )
+    parser.add_argument(
+        "--inspect-prompt",
+        default=PROMPT_SUITE[0],
+        help="Prompt to use for cache inspection. Default: first suite prompt.",
+    )
+    return parser
 
 def main():
+    args = _build_parser().parse_args()
     _set_seed(SEED)
-    run_dir = EXPERIMENTS_ROOT / _run_name()
-    run_dir.mkdir(parents=True, exist_ok=False)
-
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, **_build_tokenizer_kwargs())
     model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, **_build_load_kwargs())
+
+    if args.inspect_cache:
+        print(f"Inspecting recurrent cache for: {MODEL_NAME}")
+        if GGUF_FILE:
+            print(f"GGUF file: {GGUF_FILE}")
+        print(f"Torch dtype: {DTYPE}")
+        inspect_recurrent_cache(
+            prompt=args.inspect_prompt,
+            model=model,
+            tokenizer=tokenizer,
+        )
+        return
+
+    run_dir = EXPERIMENTS_ROOT / _run_name()
+    run_dir.mkdir(parents=True, exist_ok=False)
 
     prompts = PROMPT_SUITE[:PROMPTS_LIMIT] if PROMPTS_LIMIT > 0 else PROMPT_SUITE
 
