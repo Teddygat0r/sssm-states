@@ -205,3 +205,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local secrets and notebook-generated exports
+state_spectrum_sweep/exports
+state_spectrum_sweep/snappy-striker-440406-r5-404eb047e9b2.json
+state_spectrum_sweep/export_rank_kl_to_sheets.ipynb

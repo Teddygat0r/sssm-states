@@ -48,6 +48,9 @@ import argparse
 import copy
 import inspect
 import json
+import os
+import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -69,6 +72,7 @@ HF_MODEL_REWRITES = {
     "state-spaces/mamba-2.8b": "state-spaces/mamba-2.8b-hf",
 }
 LOW_RANK_RANK = 16
+SVD_NITER = int(os.getenv("SVD_NITER", "1"))
 QUANT_BITS = 8
 MAX_NEW_TOKENS = 100
 SAMPLING_TEMPERATURE = 0.7
@@ -119,6 +123,44 @@ def _require_transformers():
             "Install the repo dependencies first."
         ) from exc
     return AutoModelForCausalLM, AutoTokenizer
+
+
+def _is_zamba_model_name(model_name: str) -> bool:
+    return "zamba" in model_name.lower()
+
+
+def _is_zamba_tied_weights_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "tie_weights_keys" in message and "shared_transformer" in message
+
+
+@contextmanager
+def _temporary_zamba_tied_weights_fallback():
+    from transformers.modeling_utils import PreTrainedModel
+
+    original = PreTrainedModel.get_expanded_tied_weights_keys
+    state = {"used": False}
+
+    def patched(self, all_submodels: bool = False):
+        try:
+            return original(self, all_submodels=all_submodels)
+        except ValueError as exc:
+            if not _is_zamba_tied_weights_error(exc):
+                raise
+            state["used"] = True
+            warnings.warn(
+                "Falling back past a known Zamba tied-weights bug in older "
+                "Transformers releases. If possible, upgrade to "
+                "`transformers>=5.1.0`, which includes the upstream fix.",
+                stacklevel=2,
+            )
+            return {}
+
+    PreTrainedModel.get_expanded_tied_weights_keys = patched
+    try:
+        yield state
+    finally:
+        PreTrainedModel.get_expanded_tied_weights_keys = original
 
 def _load_tokenizer(tokenizer_name: str):
     _, AutoTokenizer = _require_transformers()
@@ -230,7 +272,7 @@ def _sample_next_token(
     return next_token
 
 
-def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 4):
+def low_rank_svd(tensor: torch.Tensor, n: int = 16, oversample: int = 4, niter: int = 1):
     if tensor.dim() < 2:
         raise ValueError(f"SVD expects tensor rank >= 2, got shape {tuple(tensor.shape)}")
     work_tensor = tensor.float()
@@ -422,30 +464,51 @@ def _extract_layer_index(path: tuple[Any, ...]) -> int | None:
                 return int(candidate)
     return None
 
+def _zamba2_cache_slot(path: tuple[Any, ...], root_name: str) -> int | None:
+    if len(path) != 3:
+        return None
+    root, layer_idx, slot_idx = path
+    if root != root_name:
+        return None
+    if not isinstance(layer_idx, int):
+        return None
+    if not isinstance(slot_idx, int):
+        return None
+    return slot_idx
 
 def _matches_subset(path: tuple[Any, ...], name: str, subset: str, *, strict_ssm: bool) -> bool:
     lowered = name.lower()
     path_tokens = set(_normalized_path_tokens(path))
     path_parts = _normalized_path_parts(path)
+    zamba_mamba_slot = _zamba2_cache_slot(path, "key_value_memory_dict_mamba")
+    zamba_attn_slot = _zamba2_cache_slot(path, "key_value_memory_dict")
     if subset == "all":
         return True
     if subset == "ssm":
+        if zamba_mamba_slot is not None:
+            return zamba_mamba_slot == 1
         if strict_ssm:
             return bool(path_parts & STRICT_SSM_FIELD_NAMES)
-        return "ssm" in lowered or "state" in lowered
+        return "ssm" in lowered or "state" in lowered or "mamba" in lowered
     if subset == "conv":
+        if zamba_mamba_slot is not None:
+            return zamba_mamba_slot == 0
         if strict_ssm:
             return bool(path_parts & STRICT_CONV_FIELD_NAMES)
         return "conv" in lowered
     if subset == "attn":
+        if zamba_attn_slot is not None:
+            return True
         if strict_ssm:
             return bool(path_parts & STRICT_ATTN_FIELD_NAMES)
         attention_tokens = ("attn", "attention", "key_cache", "value_cache", "key", "value")
         return any(token in lowered for token in attention_tokens)
     if subset == "auto":
+        if zamba_mamba_slot is not None:
+            return True
         if strict_ssm:
             return bool(path_parts & (STRICT_SSM_FIELD_NAMES | STRICT_CONV_FIELD_NAMES))
-        return any(token in lowered for token in ("ssm", "conv", "recurrent", "state"))
+        return any(token in lowered for token in ("ssm", "conv", "recurrent", "state", "mamba"))
     raise ValueError(f"Unsupported subset: {subset}")
 
 
@@ -472,6 +535,11 @@ def extract_cache_tensors(
     if subset == "auto" and target_layer is None:
         return views
     return filtered
+
+
+def _is_native_mamba2_backend(backend: "BaseBackend") -> bool:
+    return isinstance(backend, NativeMambaBackend) and "mamba2" in backend.model_name.lower()
+
 
 def _native_mamba2_slot(path: tuple[Any, ...]) -> int | None:
     if len(path) != 3:
@@ -597,11 +665,33 @@ class HuggingFaceBackend(BaseBackend):
     def load(self) -> None:
         AutoModelForCausalLM, _ = _require_transformers()
         self.tokenizer = _load_tokenizer(self.tokenizer_name or self.model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            dtype=self.dtype,
-            device_map="auto" if self.device == "cuda" else None,
-        )
+        load_kwargs = {
+            "dtype": self.dtype,
+            "device_map": "auto" if self.device == "cuda" else None,
+        }
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                **load_kwargs,
+            )
+        except ValueError as exc:
+            if not (_is_zamba_model_name(self.model_name) and _is_zamba_tied_weights_error(exc)):
+                raise
+            with _temporary_zamba_tied_weights_fallback() as fallback_state:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    **load_kwargs,
+                )
+            if fallback_state["used"]:
+                raise RuntimeError(
+                    "Zamba loaded only via a tied-weights compatibility fallback, "
+                    "which indicates your installed Transformers build is still not "
+                    "compatible with this checkpoint. Refusing to continue because "
+                    "the resulting model can have missing/shared-transformer weights "
+                    "and produce invalid cache measurements. Install a Transformers "
+                    "build that matches the current Zamba2 implementation, ideally "
+                    "from the Hugging Face source tree in this environment."
+                )
         if self.device != "cuda":
             self.model.to(self.device)
         self.device = str(_resolve_hf_input_device(self.model))
@@ -747,6 +837,7 @@ def _make_perturbed_cache(
     *,
     experiment: str,
     low_rank_rank: int,
+    svd_niter: int,
     quant_bits: int,
 ) -> tuple[Any, dict[str, torch.Tensor]]:
     approx_cache = clone_cache(cache_obj)
@@ -762,7 +853,7 @@ def _make_perturbed_cache(
             if current.dim() < 2:
                 approx = current.detach().clone()
             else:
-                approx = low_rank_svd(current, n=low_rank_rank)
+                approx = low_rank_svd(current, n=low_rank_rank, niter=svd_niter)
         elif experiment == "quant":
             approx = fake_quantize(current, n_bits=quant_bits)
         else:
@@ -822,6 +913,7 @@ def run_single_prompt(
     target_layer: int | None,
     generate_from: str,
     low_rank_rank: int,
+    svd_niter: int,
     quant_bits: int,
     max_new_tokens: int,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor], str, int, dict]:
@@ -922,6 +1014,7 @@ def run_single_prompt(
                 current_views,
                 experiment=experiment,
                 low_rank_rank=low_rank_rank,
+                svd_niter=svd_niter,
                 quant_bits=quant_bits,
             )
             transform_elapsed = perf_counter() - transform_start
@@ -981,6 +1074,7 @@ def run_single_prompt(
         "strict_ssm": strict_ssm,
         "target_layer": target_layer,
         "generate_from": generate_from,
+        "svd_niter": svd_niter,
     }
     return torch.tensor(kl_list, dtype=torch.float32), metrics, response, prompt_len, meta
 
@@ -1058,6 +1152,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use strict cache-field matching for the SSM subset.",
     )
     parser.add_argument("--low-rank-rank", type=int, default=LOW_RANK_RANK)
+    parser.add_argument("--svd-niter", type=int, default=SVD_NITER)
     parser.add_argument("--quant-bits", type=int, default=QUANT_BITS)
     parser.add_argument("--max-new-tokens", type=int, default=MAX_NEW_TOKENS)
     parser.add_argument("--inspect-cache", action="store_true")
@@ -1111,6 +1206,7 @@ def main() -> None:
                 target_layer=target_layer,
                 generate_from=args.generate_from,
                 low_rank_rank=args.low_rank_rank,
+                svd_niter=args.svd_niter,
                 quant_bits=args.quant_bits,
                 max_new_tokens=args.max_new_tokens,
             )
