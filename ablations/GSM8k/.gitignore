@@ -1,0 +1,10 @@
+# Per-config lm-eval sample dumps (~14 MB each, 150+ MB total) — regenerable by
+# rerunning run_gsm8k_compression.py. The headline metrics are committed in
+# gsm8k_results.csv / gsm8k_summary.csv.
+raw/
+
+# Run logs
+*.log
+
+__pycache__/
+*.pyc
