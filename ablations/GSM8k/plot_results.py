@@ -117,7 +117,7 @@ def _plot(df: pd.DataFrame) -> None:
     if not quant.empty:
         ax.scatter(
             quant["effective_bits"], quant["exact_match_strict"],
-            marker="s", color="tab:orange", s=80, label="naive per-head quant", zorder=3,
+            marker="s", color="tab:orange", s=80, label="Naive per-head quant", zorder=3,
         )
         for _, row in quant.iterrows():
             ax.annotate(
@@ -152,7 +152,7 @@ def _plot(df: pd.DataFrame) -> None:
     )
     ax.set_xscale("log")
     ax.grid(True, which="both", linestyle=":", alpha=0.5)
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower left")
 
     fig.tight_layout()
     fig.savefig(FIG_PNG, dpi=200)
