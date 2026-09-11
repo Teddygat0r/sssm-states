@@ -1,0 +1,2 @@
+prompt_idx_in_perm,mmlu_index,subject,variant,err,seq_len
+2,5598,high_school_statistics,chol_v6_baseline,_LinAlgError: linalg.eigh: (Batch element 736): The algorithm failed to converge because the input matrix is ill-conditioned or has too many repeated eigenvalues (error code:,116

@@ -1,0 +1,18 @@
+========================================================================================================================
+chol_v6 vs chol_mp/chol_mp2 on 20 MMLU prompts × Qwen3.5-4B states
+========================================================================================================================
+  jitter_factor    : 1e-08
+  rsvd_eigh.n_iter : 2 (default)
+  wall-clock       : 34s (1714 ms/prompt)
+  accuracy checks  : 4 per variant
+
+variant                     raise_rate   time_avg_ms    err_mean_avg    gap_mean_avg     gap_p99_avg   gap_max_worst
+chol_v6_baseline                  1/20         13.71         0.06052       +0.012265        +0.03347         +0.0377
+chol_v6_jitter_1e-8               0/20          9.63         0.06052       +0.012265        +0.03347         +0.0377
+chol_mp                           0/20         21.44         0.04830       +0.000042        +0.00030         +0.0016
+chol_mp2                          0/20         23.93         0.04830       +0.000043        +0.00032         +0.0016
+
+Jitter vs no-jitter consistency check (chol_v6 path, accuracy-checked prompts only):
+  n checks                : 4
+  mean of max per-state |Δerr| : 3.586e-08
+  worst of max per-state |Δerr|: 7.823e-08

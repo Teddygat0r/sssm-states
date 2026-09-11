@@ -1,0 +1,13 @@
+prompt_id,subject,method,power_dtype,failure_type,detail,rank_deficient_q_states,n_states
+mmlu_64,abstract_algebra,chol_min,float32,exception,_LinAlgError: linalg.cholesky: (Batch element 0): The factorization could not be completed because the input is not positive-definite (the leading minor of order 24 is not positive-definite).,0,768
+mmlu_64,abstract_algebra,chol_min,bfloat16,exception,_LinAlgError: linalg.cholesky: (Batch element 0): The factorization could not be completed because the input is not positive-definite (the leading minor of order 24 is not positive-definite).,0,768
+mmlu_64,abstract_algebra,cholqr2,float32,excess_recon_error,"over_5pct_abs=0, over_50pct_rel=10, max_gap_abs=0.0004, max_gap_rel=5.711",0,768
+mmlu_64,abstract_algebra,cholqr2,bfloat16,excess_recon_error,"over_5pct_abs=0, over_50pct_rel=132, max_gap_abs=0.0008, max_gap_rel=9.749",0,768
+mmlu_64,abstract_algebra,house,float32,excess_recon_error,"over_5pct_abs=0, over_50pct_rel=11, max_gap_abs=0.0005, max_gap_rel=2.838",0,768
+mmlu_64,abstract_algebra,house,bfloat16,excess_recon_error,"over_5pct_abs=0, over_50pct_rel=136, max_gap_abs=0.0007, max_gap_rel=10.159",0,768
+mmlu_8336,moral_disputes,chol_min,float32,exception,_LinAlgError: linalg.cholesky: (Batch element 1): The factorization could not be completed because the input is not positive-definite (the leading minor of order 9 is not positive-definite).,0,768
+mmlu_8336,moral_disputes,chol_min,bfloat16,exception,_LinAlgError: linalg.cholesky: (Batch element 1): The factorization could not be completed because the input is not positive-definite (the leading minor of order 10 is not positive-definite).,0,768
+mmlu_8336,moral_disputes,cholqr2,float32,excess_recon_error,"over_5pct_abs=0, over_50pct_rel=14, max_gap_abs=0.0007, max_gap_rel=4.790",0,768
+mmlu_8336,moral_disputes,cholqr2,bfloat16,excess_recon_error,"over_5pct_abs=0, over_50pct_rel=147, max_gap_abs=0.0008, max_gap_rel=5.527",0,768
+mmlu_8336,moral_disputes,house,float32,excess_recon_error,"over_5pct_abs=0, over_50pct_rel=18, max_gap_abs=0.0007, max_gap_rel=4.646",0,768
+mmlu_8336,moral_disputes,house,bfloat16,excess_recon_error,"over_5pct_abs=0, over_50pct_rel=145, max_gap_abs=0.0016, max_gap_rel=6.219",0,768

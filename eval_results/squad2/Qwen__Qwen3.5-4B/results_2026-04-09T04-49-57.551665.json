@@ -1,0 +1,142 @@
+{
+  "results": {
+    "squadv2": {
+      "alias": "squadv2",
+      "exact,none": 49.29090909090909,
+      "exact_stderr,none": "N/A",
+      "f1,none": 49.760778048533865,
+      "f1_stderr,none": "N/A",
+      "HasAns_exact,none": 4.029769468143039,
+      "HasAns_exact_stderr,none": "N/A",
+      "HasAns_f1,none": 4.967972142652478,
+      "HasAns_f1_stderr,none": "N/A",
+      "NoAns_exact,none": 94.7004188672373,
+      "NoAns_exact_stderr,none": "N/A",
+      "NoAns_f1,none": 94.7004188672373,
+      "NoAns_f1_stderr,none": "N/A",
+      "best_exact,none": 49.91818181818182,
+      "best_exact_stderr,none": "N/A",
+      "best_f1,none": 50.32344871120452,
+      "best_f1_stderr,none": "N/A"
+    }
+  },
+  "group_subtasks": {
+    "squadv2": []
+  },
+  "configs": {
+    "squadv2": {
+      "task": "squadv2",
+      "unsafe_code": false,
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "default",
+        "split": null,
+        "process_docs": null,
+        "fewshot_indices": null,
+        "samples": null,
+        "doc_to_text": null,
+        "doc_to_choice": null,
+        "doc_to_target": null,
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 0,
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "temperature": 0.0,
+        "do_sample": false,
+        "max_gen_toks": 256,
+        "until": [
+          "\n\n"
+        ]
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 3
+      }
+    }
+  },
+  "versions": {
+    "squadv2": 3
+  },
+  "n-shot": {
+    "squadv2": 0
+  },
+  "higher_is_better": {
+    "squadv2": {
+      "exact": true,
+      "f1": true,
+      "HasAns_exact": true,
+      "HasAns_f1": true,
+      "NoAns_exact": true,
+      "NoAns_f1": true,
+      "best_exact": true,
+      "best_f1": true
+    }
+  },
+  "n-samples": {
+    "squadv2": {
+      "original": 11873,
+      "effective": 11000
+    }
+  },
+  "config": {
+    "model": "local-completions",
+    "model_args": {
+      "model": "Qwen/Qwen3.5-4B",
+      "base_url": "http://127.0.0.1:30000/v1/completions",
+      "num_concurrent": 8,
+      "max_retries": 5,
+      "tokenized_requests": false,
+      "max_gen_toks": 1024,
+      "timeout": 600
+    },
+    "batch_size": "16",
+    "batch_sizes": [],
+    "device": "cuda:0",
+    "use_cache": null,
+    "limit": 11000.0,
+    "bootstrap_iters": 100000,
+    "gen_kwargs": {},
+    "random_seed": 0,
+    "numpy_seed": 1234,
+    "torch_seed": 1234,
+    "fewshot_seed": 1234
+  },
+  "git_hash": "58f4879",
+  "date": 1775708480.1584983,
+  "pretty_env_info": "PyTorch version: 2.11.0+cu130\nIs debug build: False\nCUDA used to build PyTorch: 13.0\nROCM used to build PyTorch: N/A\n\nOS: Ubuntu 24.04.3 LTS (aarch64)\nGCC version: (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0\nClang version: Could not collect\nCMake version: version 3.28.3\nLibc version: glibc-2.39\n\nPython version: 3.10.19 (main, Oct 31 2025, 22:58:45) [Clang 21.1.4 ] (64-bit runtime)\nPython platform: Linux-6.11.0-1016-nvidia-aarch64-with-glibc2.39\nIs CUDA available: True\nCUDA runtime version: 13.0.88\nCUDA_MODULE_LOADING set to: \nGPU models and configuration: GPU 0: NVIDIA GB10\nNvidia driver version: 580.95.05\ncuDNN version: Could not collect\nIs XPU available: False\nHIP runtime version: N/A\nMIOpen runtime version: N/A\nIs XNNPACK available: True\nCaching allocator config: N/A\n\nCPU:\nArchitecture:                         aarch64\nCPU op-mode(s):                       64-bit\nByte Order:                           Little Endian\nCPU(s):                               20\nOn-line CPU(s) list:                  0-19\nVendor ID:                            ARM\nModel name:                           Cortex-X925\nModel:                                1\nThread(s) per core:                   1\nCore(s) per socket:                   10\nSocket(s):                            1\nStepping:                             r0p1\nCPU(s) scaling MHz:                   107%\nCPU max MHz:                          4004.0000\nCPU min MHz:                          1378.0000\nBogoMIPS:                             2000.00\nFlags:                                fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti ecv afp wfxt\nModel name:                           Cortex-A725\nModel:                                1\nThread(s) per core:                   1\nCore(s) per socket:                   10\nSocket(s):                            1\nStepping:                             r0p1\nCPU(s) scaling MHz:                   104%\nCPU max MHz:                          2860.0000\nCPU min MHz:                          338.0000\nBogoMIPS:                             2000.00\nFlags:                                fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm sb paca pacg dcpodp sve2 sveaes svepmull svebitperm svesha3 svesm4 flagm2 frint svei8mm svebf16 i8mm bf16 dgh bti ecv afp wfxt\nL1d cache:                            1.3 MiB (20 instances)\nL1i cache:                            1.3 MiB (20 instances)\nL2 cache:                             25 MiB (20 instances)\nL3 cache:                             24 MiB (2 instances)\nNUMA node(s):                         1\nNUMA node0 CPU(s):                    0-19\nVulnerability Gather data sampling:   Not affected\nVulnerability Itlb multihit:          Not affected\nVulnerability L1tf:                   Not affected\nVulnerability Mds:                    Not affected\nVulnerability Meltdown:               Not affected\nVulnerability Mmio stale data:        Not affected\nVulnerability Reg file data sampling: Not affected\nVulnerability Retbleed:               Not affected\nVulnerability Spec rstack overflow:   Not affected\nVulnerability Spec store bypass:      Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:             Mitigation; __user pointer sanitization\nVulnerability Spectre v2:             Not affected\nVulnerability Srbds:                  Not affected\nVulnerability Tsx async abort:        Not affected\n\nVersions of relevant libraries:\n[pip3] Could not collect\n[conda] No relevant packages",
+  "transformers_version": "4.57.1",
+  "lm_eval_version": "0.4.11",
+  "upper_git_hash": null,
+  "tokenizer_pad_token": [
+    "<|endoftext|>",
+    "248044"
+  ],
+  "tokenizer_eos_token": [
+    "<|im_end|>",
+    "248046"
+  ],
+  "tokenizer_bos_token": [
+    null,
+    "None"
+  ],
+  "eot_token_id": 248046,
+  "max_length": 2047,
+  "task_hashes": {
+    "squadv2": "8c21bf22c2a3110de046c637d30d916bfb466e5a2d6ac15b69417969e9931507"
+  },
+  "model_source": "local-completions",
+  "model_name": "Qwen/Qwen3.5-4B",
+  "model_name_sanitized": "Qwen__Qwen3.5-4B",
+  "system_instruction": null,
+  "system_instruction_sha": null,
+  "fewshot_as_multiturn": null,
+  "chat_template": null,
+  "chat_template_sha": null,
+  "total_evaluation_time_seconds": "1722.3890057969838"
+}

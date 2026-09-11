@@ -1,0 +1,17 @@
+================================================================================
+chol_v6 fp32 — 1000-prompt raise-rate experiment
+================================================================================
+  n_prompts          : 20
+  jitter_factor      : 1e-08
+  wall-clock         : 4s  (222 ms/prompt)
+
+  baseline raised    : 1/20 (5.00%)
+  jitter raised      : 0/20 (0.00%)
+  recoveries by jit  : 1  (baseline raised, jitter ok)
+  jitter regressions : 0  (jitter raised, baseline ok)
+
+  accuracy checks    : 4
+  accuracy mismatches: 0  (recon err diff > 1e-4)
+
+Top MMLU subjects in baseline failures:
+  high_school_statistics                    1

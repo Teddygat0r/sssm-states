@@ -1,0 +1,13 @@
+==============================================================================================================
+chol_v6 (GPU fp32) vs torch.svd_lowrank (CPU)  —  10 MMLU prompts
+==============================================================================================================
+  jitter_factor   : 1e-08
+  rsvd_eigh.n_iter: 2  (default — docstring says this matches svd_lowrank niter=4)
+  svd_lowrank q   : 24  (rank + oversample)
+  wall-clock      : 42s
+
+variant                     raise_rate   time_avg_ms    err_mean_avg    gap_mean_avg   gap_max_worst   acc_checked
+chol_v6_baseline                  1/10         16.50          0.0632         0.01165         +0.0371             4
+chol_v6_jitter                    0/10          8.29          0.0631         0.01171         +0.0371             5
+svd_lowrank_cpu_n2                0/10        248.48          0.0514         0.00002         +0.0015             5
+svd_lowrank_cpu_n4                0/10        256.19          0.0514         0.00000         +0.0001             5
