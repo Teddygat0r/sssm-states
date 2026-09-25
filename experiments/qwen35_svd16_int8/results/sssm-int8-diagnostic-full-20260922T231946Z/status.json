@@ -1,0 +1,13 @@
+{
+  "state": "completed",
+  "started_unix": 1790119186.758571,
+  "completed": 200,
+  "total": 200,
+  "current_doc_id": 1308,
+  "current_decode_steps": 64,
+  "current_seconds": 6.0096879079937935,
+  "updated_unix": 1790123780.7023392,
+  "mean_question_seconds": 22.68555670911446,
+  "eta_unix": 1790123780.702339,
+  "finished_unix": 1790123780.7035203
+}

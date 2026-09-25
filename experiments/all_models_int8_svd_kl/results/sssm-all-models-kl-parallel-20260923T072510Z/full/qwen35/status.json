@@ -1,0 +1,10 @@
+{
+  "state": "stopped_by_user",
+  "started_unix": 1790148399.5452979,
+  "completed": 0,
+  "model": "qwen35",
+  "total": 400,
+  "current_prompt": "sharegpt_0000",
+  "position": 256,
+  "stopped_unix": 1790148498.8151598
+}

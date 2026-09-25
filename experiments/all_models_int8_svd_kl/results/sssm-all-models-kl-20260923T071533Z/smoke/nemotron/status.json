@@ -1,0 +1,13 @@
+{
+  "state": "completed",
+  "started_unix": 1790147862.1504705,
+  "completed": 4,
+  "model": "nemotron",
+  "total": 4,
+  "current_prompt": "code_thestack_0000",
+  "position": -1,
+  "mean_task_seconds": 2.9649497200734913,
+  "eta_unix": 1790147925.5049808,
+  "updated_unix": 1790147925.5049813,
+  "finished_unix": 1790147925.6726546
+}

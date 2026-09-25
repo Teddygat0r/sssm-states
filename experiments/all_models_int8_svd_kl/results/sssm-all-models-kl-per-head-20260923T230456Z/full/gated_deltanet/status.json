@@ -1,0 +1,13 @@
+{
+  "state": "completed",
+  "started_unix": 1790204779.862001,
+  "completed": 400,
+  "model": "gated_deltanet",
+  "total": 400,
+  "current_prompt": "code_thestack_0099",
+  "position": -1,
+  "mean_task_seconds": 19.803952006776818,
+  "eta_unix": 1790212865.0774431,
+  "updated_unix": 1790212865.0774438,
+  "finished_unix": 1790212865.511549
+}

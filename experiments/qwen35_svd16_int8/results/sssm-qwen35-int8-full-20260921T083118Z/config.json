@@ -1,0 +1,26 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "arms": [
+    "uncompressed",
+    "svd16",
+    "svd16_int8"
+  ],
+  "rank": 16,
+  "bits": 8,
+  "seed": 20260921,
+  "factorization": "L=U*sqrt(S), R=sqrt(S)*Vh; independently symmetric int8 per rank component",
+  "compression": "after prefill and every decode step; all recurrent layers; reconstruct for dense compute",
+  "metrics": "teacher-forced reference NLL/perplexity, KL and top1 vs uncompressed; independent greedy text",
+  "attention_and_conv": "uncompressed",
+  "contexts": [
+    256,
+    2048
+  ],
+  "steps": 128,
+  "prompts_per_kind": 10,
+  "tasks": 40,
+  "torch": "2.11.0+cu130",
+  "gpu": "NVIDIA GB10",
+  "smoke": false,
+  "source_sha256": "2b008cdb7c2e1b23b24f6a4a8b009cf53b294657c4586a81077af6ee7acae612"
+}

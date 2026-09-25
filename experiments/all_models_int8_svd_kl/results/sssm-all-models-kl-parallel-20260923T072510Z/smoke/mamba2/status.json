@@ -1,0 +1,13 @@
+{
+  "state": "completed",
+  "started_unix": 1790148312.3644524,
+  "completed": 4,
+  "model": "mamba2",
+  "total": 4,
+  "current_prompt": "code_thestack_0000",
+  "position": -1,
+  "mean_task_seconds": 2.9958343538455665,
+  "eta_unix": 1790148327.4334834,
+  "updated_unix": 1790148327.4334836,
+  "finished_unix": 1790148327.5339599
+}

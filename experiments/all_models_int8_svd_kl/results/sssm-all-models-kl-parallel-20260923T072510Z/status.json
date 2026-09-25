@@ -1,0 +1,20 @@
+{
+  "state": "stopped_by_user",
+  "started_unix": 1790148310.4822602,
+  "completed_jobs": 5,
+  "total_jobs": 10,
+  "concurrency": 5,
+  "completed_models": [],
+  "failed_models": {},
+  "phase": "full",
+  "active_models": [],
+  "updated_unix": 1790148397.7369475,
+  "stopped_unix": 1790148498.8137143,
+  "stopped_models": [
+    "deltanet",
+    "gated_deltanet",
+    "qwen35",
+    "mamba2",
+    "nemotron"
+  ]
+}

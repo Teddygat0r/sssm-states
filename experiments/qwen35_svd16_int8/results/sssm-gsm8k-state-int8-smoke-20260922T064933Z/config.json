@@ -1,0 +1,29 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "arms": [
+    "uncompressed",
+    "int8_state"
+  ],
+  "num_fewshot": 5,
+  "max_tokens": 768,
+  "num_questions": 1,
+  "greedy": true,
+  "stop": [
+    "Question:",
+    "</s>",
+    "<|im_end|>"
+  ],
+  "source": "/home/joshuaz/sssm-states/eval_results/gsm8k/Qwen__Qwen3.5-4B/samples_gsm8k_2026-04-03T02-02-47.394179.jsonl",
+  "source_sha256": "002304d1963da53cbd9a13cbe9029d8dcc7b7647701dd89496cb860662431a2e",
+  "runner_sha256": "84c87a0ebf5ca945e484d8d3fb5477e348863fbc0715fa855e681ee401f30421",
+  "seed": 20260921,
+  "rank": null,
+  "bits": 8,
+  "oversample": null,
+  "n_iter": null,
+  "quantization": "full recurrent matrix; symmetric signed INT8 [-127,127] per layer/head; FP32 scales; no SVD",
+  "compression": "before last prompt token and every decode step, all recurrent layers; dense reconstruction",
+  "grading": "GSM8K lm-eval v3.0 regex extraction and exact-match normalization",
+  "torch": "2.11.0+cu130",
+  "gpu": "NVIDIA GB10"
+}

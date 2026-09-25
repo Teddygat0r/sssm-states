@@ -1,0 +1,40 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "arms": [
+    "uncompressed",
+    "int8_head_every",
+    "int8_row_every",
+    "int8_column_every",
+    "int8_head_prefill_only",
+    "svd16_int8_every"
+  ],
+  "sample_seed": 20260922,
+  "n_questions": 1,
+  "doc_ids": [
+    15
+  ],
+  "max_tokens": 768,
+  "num_fewshot": 5,
+  "greedy": true,
+  "smoke": true,
+  "quantization": "symmetric signed INT8 [-127,127]; FP32 scales; dense reconstruction",
+  "scales_per_head": {
+    "int8_head_every": 1,
+    "int8_row_every": 128,
+    "int8_column_every": 128,
+    "int8_head_prefill_only": 1,
+    "svd16_int8_every": 32
+  },
+  "compression": "before last prompt token and every decode step except prefill_only arm",
+  "state_dimensions": [
+    128,
+    128
+  ],
+  "svd_rank": 16,
+  "oversample": 8,
+  "n_iter": 2,
+  "source": "/home/joshuaz/sssm-states/eval_results/gsm8k/Qwen__Qwen3.5-4B/samples_gsm8k_2026-04-03T02-02-47.394179.jsonl",
+  "source_sha256": "002304d1963da53cbd9a13cbe9029d8dcc7b7647701dd89496cb860662431a2e",
+  "runner_sha256": "baa7b39cdf5c2fd48cb26a919838f8f17b7051d7a17ec9477198cf7ef2fe4bd5",
+  "base_runner_sha256": "84c87a0ebf5ca945e484d8d3fb5477e348863fbc0715fa855e681ee401f30421"
+}

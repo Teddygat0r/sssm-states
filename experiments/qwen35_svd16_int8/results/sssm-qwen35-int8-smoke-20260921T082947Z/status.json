@@ -1,0 +1,12 @@
+{
+  "state": "completed",
+  "started_unix": 1789979387.8645034,
+  "completed": 1,
+  "total": 1,
+  "current_prompt": "sharegpt_0000",
+  "current_context": 256,
+  "mean_task_seconds": 2.714561127126217,
+  "eta_unix": 1789979453.8492754,
+  "updated_unix": 1789979453.8492758,
+  "finished_unix": 1789979453.8500824
+}

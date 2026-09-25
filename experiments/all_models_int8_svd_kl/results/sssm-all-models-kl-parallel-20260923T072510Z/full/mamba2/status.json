@@ -1,0 +1,13 @@
+{
+  "state": "stopped_by_user",
+  "started_unix": 1790148399.5954099,
+  "completed": 3,
+  "model": "mamba2",
+  "total": 400,
+  "current_prompt": "sharegpt_0001",
+  "position": -1,
+  "mean_task_seconds": 21.153329628209274,
+  "eta_unix": 1790156866.9473794,
+  "updated_unix": 1790148469.0755172,
+  "stopped_unix": 1790148498.8150797
+}

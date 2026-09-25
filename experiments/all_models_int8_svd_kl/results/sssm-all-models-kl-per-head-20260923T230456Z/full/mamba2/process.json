@@ -1,0 +1,15 @@
+{
+  "pid": 1961880,
+  "started_unix": 1790204778.0804443,
+  "command": [
+    "/home/joshuaz/sssm-states/.venv/bin/python",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/worker.py",
+    "--model",
+    "mamba2",
+    "--prompts",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-per-head-20260923T230456Z/prompts.json",
+    "--output",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-per-head-20260923T230456Z/full/mamba2",
+    "--int8-per-head-only"
+  ]
+}

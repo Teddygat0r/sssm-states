@@ -1,0 +1,20 @@
+{
+  "uncompressed": {
+    "n": 1319,
+    "strict_accuracy": 0.8589840788476119,
+    "flexible_accuracy": 0.8582259287338894,
+    "truncated": 14
+  },
+  "svd16": {
+    "n": 1319,
+    "strict_accuracy": 0.8483699772554966,
+    "flexible_accuracy": 0.846095526914329,
+    "truncated": 13
+  },
+  "svd16_int8": {
+    "n": 1319,
+    "strict_accuracy": 0.8369977255496588,
+    "flexible_accuracy": 0.8316906747536013,
+    "truncated": 51
+  }
+}

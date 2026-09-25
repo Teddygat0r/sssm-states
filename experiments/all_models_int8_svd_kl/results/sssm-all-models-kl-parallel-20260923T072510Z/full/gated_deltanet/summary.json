@@ -1,0 +1,54 @@
+[
+  {
+    "model": "GatedDeltaNet-1.3B",
+    "position": -1,
+    "method": "int8_layer_affine",
+    "n": 96,
+    "kl_mean": 0.009598502500845521,
+    "kl_median": 0.003701014444231987,
+    "kl_p90": 0.024857021868228912,
+    "kl_p99": 0.10877004265785217,
+    "kl_max": 0.10877004265785217,
+    "top1_agreement": 0.9583333333333334,
+    "state_rel_fro_squared_mean": 0.0872184320948387
+  },
+  {
+    "model": "GatedDeltaNet-1.3B",
+    "position": -1,
+    "method": "svd16",
+    "n": 96,
+    "kl_mean": 0.3316884461873239,
+    "kl_median": 0.048776015639305115,
+    "kl_p90": 1.0738401412963867,
+    "kl_p99": 5.454049587249756,
+    "kl_max": 5.454049587249756,
+    "top1_agreement": 0.78125,
+    "state_rel_fro_squared_mean": 0.06860198235760134
+  },
+  {
+    "model": "GatedDeltaNet-1.3B",
+    "position": 256,
+    "method": "int8_layer_affine",
+    "n": 128,
+    "kl_mean": 0.004528749821407274,
+    "kl_median": 0.0018501686863601208,
+    "kl_p90": 0.011341515928506851,
+    "kl_p99": 0.031468432396650314,
+    "kl_max": 0.0405295193195343,
+    "top1_agreement": 0.9765625,
+    "state_rel_fro_squared_mean": 0.08072033024594324
+  },
+  {
+    "model": "GatedDeltaNet-1.3B",
+    "position": 256,
+    "method": "svd16",
+    "n": 128,
+    "kl_mean": 0.052787573640735275,
+    "kl_median": 0.012646122835576534,
+    "kl_p90": 0.13900871574878693,
+    "kl_p99": 0.6455006003379822,
+    "kl_max": 0.8677406907081604,
+    "top1_agreement": 0.921875,
+    "state_rel_fro_squared_mean": 0.04641919982774805
+  }
+]

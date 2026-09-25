@@ -1,0 +1,55 @@
+{
+  "model": "DeltaNet-1.3B",
+  "methods": [
+    "int8_layer_affine",
+    "svd1",
+    "svd2",
+    "svd4",
+    "svd8",
+    "svd16",
+    "svd32"
+  ],
+  "prompts": 200,
+  "gen_tokens": 128,
+  "every": 4,
+  "positions": [
+    256,
+    "full"
+  ],
+  "max_full_tokens": 65536,
+  "stop_on_eos": false,
+  "int8": "FP32 affine min/max with one scale/zero-point per layer across all heads; 256 levels",
+  "svd": "randomized_svd_eigh, historical rank groups, niter2; no factor quantization",
+  "ranks": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32
+  ],
+  "svd_groups": [
+    [
+      [
+        4,
+        8,
+        16
+      ],
+      8
+    ],
+    [
+      [
+        1,
+        2,
+        32
+      ],
+      0
+    ]
+  ],
+  "probe_batch": 8,
+  "protocol": "paired isolated single-step probes; keep native reference row; attention and conv untouched",
+  "prefill_logits": "last token only when model explicitly supports logits_to_keep",
+  "prompt_sha256": "c47ab5bedc1cda74fcc7f75ab3426812d3192bee9e4111305aee51f795dbddb6",
+  "runner_sha256": "29218d92dbd3e51b977aa3181c7cd71dd27b787297128aa4f1a331cd74bdf646",
+  "smoke": false
+}

@@ -1,0 +1,11 @@
+{
+  "state": "stopped_by_user",
+  "started_unix": 1790147733.1564965,
+  "completed_jobs": 5,
+  "total_jobs": 10,
+  "phase": "full",
+  "model": "deltanet",
+  "current_job": "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-20260923T071533Z/full/deltanet",
+  "updated_unix": 1790147926.5118322,
+  "stopped_unix": 1790148157.3846216
+}

@@ -1,0 +1,13 @@
+{
+  "state": "completed",
+  "started_unix": 1790147738.7216907,
+  "completed": 4,
+  "model": "deltanet",
+  "total": 4,
+  "current_prompt": "code_thestack_0000",
+  "position": -1,
+  "mean_task_seconds": 0.8911890755407512,
+  "eta_unix": 1790147762.5438294,
+  "updated_unix": 1790147762.5438297,
+  "finished_unix": 1790147762.6524265
+}

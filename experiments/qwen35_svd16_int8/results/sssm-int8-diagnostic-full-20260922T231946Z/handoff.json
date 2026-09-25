@@ -1,0 +1,9 @@
+{
+  "initial_runtime_hours": [
+    1,
+    3
+  ],
+  "basis": "Six-arm smoke completed 768 decode steps in 50.96s; selected questions averaged 276 steps across prior runs; allow longer new-arm generations.",
+  "checks": "Synthetic quantizer and scheduling checks passed; baseline isolation and finite-state/logit checks passed; all six answer/scoring/output paths completed in smoke.",
+  "scope": "200 fixed-seed randomly sampled GSM8K questions; diagnostic pilot, not full-test accuracy"
+}

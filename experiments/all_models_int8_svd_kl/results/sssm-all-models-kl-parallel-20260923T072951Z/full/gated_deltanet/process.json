@@ -1,0 +1,14 @@
+{
+  "pid": 1851911,
+  "started_unix": 1790148678.9992645,
+  "command": [
+    "/home/joshuaz/sssm-states/.venv/bin/python",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/worker.py",
+    "--model",
+    "gated_deltanet",
+    "--prompts",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-parallel-20260923T072951Z/prompts.json",
+    "--output",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-parallel-20260923T072951Z/full/gated_deltanet"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "all": {
+    "uncompressed": {
+      "nll": 1.2077677238732576,
+      "kl_from_uncompressed": 0.0,
+      "top1_agreement": 1.0,
+      "perplexity": 3.3460070979061887
+    },
+    "svd16": {
+      "nll": 1.1719278093427419,
+      "kl_from_uncompressed": 0.11159754617256112,
+      "top1_agreement": 0.9560546875,
+      "perplexity": 3.228210017073977
+    },
+    "svd16_int8": {
+      "nll": 1.1508016095496714,
+      "kl_from_uncompressed": 0.16382480802712962,
+      "top1_agreement": 0.9294921875,
+      "perplexity": 3.1607255622494996
+    }
+  },
+  "chat": {
+    "uncompressed": {
+      "nll": 1.422251073271036,
+      "kl_from_uncompressed": 0.0,
+      "top1_agreement": 1.0,
+      "perplexity": 4.1464438914423
+    },
+    "svd16": {
+      "nll": 1.3455949194729329,
+      "kl_from_uncompressed": 0.2171678345883265,
+      "top1_agreement": 0.942578125,
+      "perplexity": 3.8404706318715167
+    },
+    "svd16_int8": {
+      "nll": 1.3013349778950214,
+      "kl_from_uncompressed": 0.3048963216599077,
+      "top1_agreement": 0.910546875,
+      "perplexity": 3.6741983686640927
+    }
+  },
+  "code": {
+    "uncompressed": {
+      "nll": 0.9932843744754791,
+      "kl_from_uncompressed": 0.0,
+      "top1_agreement": 1.0,
+      "perplexity": 2.700088025390899
+    },
+    "svd16": {
+      "nll": 0.9982606992125511,
+      "kl_from_uncompressed": 0.006027257756795734,
+      "top1_agreement": 0.96953125,
+      "perplexity": 2.713558027980102
+    },
+    "svd16_int8": {
+      "nll": 1.0002682412043213,
+      "kl_from_uncompressed": 0.02275329439435154,
+      "top1_agreement": 0.9484375,
+      "perplexity": 2.719011081453874
+    }
+  }
+}

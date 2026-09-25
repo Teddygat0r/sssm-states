@@ -1,0 +1,28 @@
+[
+  {
+    "model": "Qwen3.5-4B",
+    "position": -1,
+    "method": "int8_head_affine",
+    "n": 4,
+    "kl_mean": 0.011671621963614598,
+    "kl_median": 0.007427412085235119,
+    "kl_p90": 0.01949784718453884,
+    "kl_p99": 0.01949784718453884,
+    "kl_max": 0.01949784718453884,
+    "top1_agreement": 1.0,
+    "state_rel_fro_squared_mean": 0.004921995304660716
+  },
+  {
+    "model": "Qwen3.5-4B",
+    "position": 256,
+    "method": "int8_head_affine",
+    "n": 4,
+    "kl_mean": 0.002156761387595907,
+    "kl_median": 0.0011343181831762195,
+    "kl_p90": 0.0035867253318428993,
+    "kl_p99": 0.0035867253318428993,
+    "kl_max": 0.0035867253318428993,
+    "top1_agreement": 1.0,
+    "state_rel_fro_squared_mean": 0.004982583872333634
+  }
+]

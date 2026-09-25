@@ -1,0 +1,19 @@
+{
+  "state": "completed",
+  "started_unix": 1790148591.682621,
+  "completed_jobs": 10,
+  "total_jobs": 10,
+  "concurrency": 5,
+  "completed_models": [
+    "deltanet",
+    "gated_deltanet",
+    "nemotron",
+    "qwen35",
+    "mamba2"
+  ],
+  "failed_models": {},
+  "phase": "full",
+  "active_models": [],
+  "updated_unix": 1790165816.763786,
+  "finished_unix": 1790165816.766743
+}

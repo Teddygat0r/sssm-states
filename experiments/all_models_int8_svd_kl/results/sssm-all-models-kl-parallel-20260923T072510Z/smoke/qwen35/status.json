@@ -1,0 +1,13 @@
+{
+  "state": "completed",
+  "started_unix": 1790148312.3450947,
+  "completed": 4,
+  "model": "qwen35",
+  "total": 4,
+  "current_prompt": "code_thestack_0000",
+  "position": -1,
+  "mean_task_seconds": 2.8447231906466186,
+  "eta_unix": 1790148396.76717,
+  "updated_unix": 1790148396.7671702,
+  "finished_unix": 1790148396.891905
+}

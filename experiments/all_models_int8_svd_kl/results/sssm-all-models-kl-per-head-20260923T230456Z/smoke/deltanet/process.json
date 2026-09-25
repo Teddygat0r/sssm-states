@@ -1,0 +1,16 @@
+{
+  "pid": 1961613,
+  "started_unix": 1790204696.689397,
+  "command": [
+    "/home/joshuaz/sssm-states/.venv/bin/python",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/worker.py",
+    "--model",
+    "deltanet",
+    "--prompts",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-per-head-20260923T230456Z/prompts.json",
+    "--output",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-per-head-20260923T230456Z/smoke/deltanet",
+    "--smoke",
+    "--int8-per-head-only"
+  ]
+}

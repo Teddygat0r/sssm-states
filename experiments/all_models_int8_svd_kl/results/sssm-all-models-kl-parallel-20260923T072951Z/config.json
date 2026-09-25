@@ -1,0 +1,47 @@
+{
+  "models": [
+    "deltanet",
+    "gated_deltanet",
+    "qwen35",
+    "mamba2",
+    "nemotron"
+  ],
+  "concurrency": 5,
+  "separate_processes": true,
+  "methods": [
+    "int8_layer_affine",
+    "svd1",
+    "svd2",
+    "svd4",
+    "svd8",
+    "svd16",
+    "svd32"
+  ],
+  "ranks": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32
+  ],
+  "prompts_per_kind": 100,
+  "gen_tokens": 128,
+  "every": 4,
+  "positions": [
+    256,
+    "full"
+  ],
+  "expected_measurements_per_model_method_position": 6400,
+  "source_prompts": "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-parallel-20260923T072510Z/prompts.json",
+  "source_prompt_sha256": "c47ab5bedc1cda74fcc7f75ab3426812d3192bee9e4111305aee51f795dbddb6",
+  "estimated_hours": [
+    6,
+    14
+  ],
+  "prefill_logits": "last token only when supported",
+  "code_sha256": {
+    "worker.py": "29218d92dbd3e51b977aa3181c7cd71dd27b787297128aa4f1a331cd74bdf646",
+    "parallel_suite.py": "7693ea17eac67886156c798eb87e50f05cf5ba4a3b6eb9dc650215e14da7cb89"
+  }
+}

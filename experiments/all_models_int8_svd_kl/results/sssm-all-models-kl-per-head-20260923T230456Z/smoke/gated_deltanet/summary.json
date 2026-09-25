@@ -1,0 +1,28 @@
+[
+  {
+    "model": "GatedDeltaNet-1.3B",
+    "position": -1,
+    "method": "int8_head_affine",
+    "n": 4,
+    "kl_mean": 0.0015291581221390516,
+    "kl_median": 0.0012196090538054705,
+    "kl_p90": 0.0030335807241499424,
+    "kl_p99": 0.0030335807241499424,
+    "kl_max": 0.0030335807241499424,
+    "top1_agreement": 1.0,
+    "state_rel_fro_squared_mean": 0.007142157936565733
+  },
+  {
+    "model": "GatedDeltaNet-1.3B",
+    "position": 256,
+    "method": "int8_head_affine",
+    "n": 4,
+    "kl_mean": 0.0007685787495574914,
+    "kl_median": 0.0005880909156985581,
+    "kl_p90": 0.001232535345479846,
+    "kl_p99": 0.001232535345479846,
+    "kl_max": 0.001232535345479846,
+    "top1_agreement": 1.0,
+    "state_rel_fro_squared_mean": 0.006687567947665229
+  }
+]

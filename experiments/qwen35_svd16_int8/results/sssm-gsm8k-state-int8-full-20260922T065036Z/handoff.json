@@ -1,0 +1,8 @@
+{
+  "initial_runtime_hours": [
+    3,
+    7
+  ],
+  "basis": "INT8-only smoke: 5.66s/86 decode steps; prior full three-arm run: 6h49m. Answer lengths and truncations remain uncertain.",
+  "checks": "Synthetic SVD bypass, baseline preservation, rounding error and zero-state checks passed; full-answer smoke passed; both arms correct; no truncation."
+}

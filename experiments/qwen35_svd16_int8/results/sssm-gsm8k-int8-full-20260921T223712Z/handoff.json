@@ -1,0 +1,10 @@
+{
+  "initial_runtime_hours": [
+    4,
+    12
+  ],
+  "estimate_basis": "One full GSM8K question took 8.04 seconds for all three arms; harder/longer answers will take longer.",
+  "smoke": "completed; all three arms correct on question 0; no truncation",
+  "scorer_validation": "2638 saved strict/flexible lm-eval scores matched",
+  "checks": "1319 unique five-shot prompts; baseline isolation; finite states/logits; Python and shell syntax passed"
+}

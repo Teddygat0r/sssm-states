@@ -1,0 +1,23 @@
+{
+  "model": "Qwen3.5-4B",
+  "methods": [
+    "int8_layer_affine",
+    "svd16"
+  ],
+  "prompts": 200,
+  "gen_tokens": 128,
+  "every": 4,
+  "positions": [
+    256,
+    "full"
+  ],
+  "max_full_tokens": 65536,
+  "stop_on_eos": false,
+  "int8": "FP32 affine min/max with one scale/zero-point per layer across all heads; 256 levels",
+  "svd": "rank16 randomized_svd_eigh, oversample8, niter2; no factor quantization",
+  "protocol": "paired isolated single-step probes; keep native reference row; attention and conv untouched",
+  "prefill_logits": "last token only when model explicitly supports logits_to_keep",
+  "prompt_sha256": "c47ab5bedc1cda74fcc7f75ab3426812d3192bee9e4111305aee51f795dbddb6",
+  "runner_sha256": "c574098991644ff54e929cdbd0bfdc625f6d7e25dc7f58fe4648692bb8b87b00",
+  "smoke": false
+}

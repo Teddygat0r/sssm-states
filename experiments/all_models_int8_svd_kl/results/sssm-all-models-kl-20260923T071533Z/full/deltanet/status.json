@@ -1,0 +1,13 @@
+{
+  "state": "stopped_by_user",
+  "started_unix": 1790147928.3158863,
+  "completed": 51,
+  "model": "deltanet",
+  "total": 400,
+  "current_prompt": "sharegpt_0025",
+  "position": -1,
+  "mean_task_seconds": 3.968714957618538,
+  "eta_unix": 1790149541.5899713,
+  "updated_unix": 1790148156.5084512,
+  "stopped_unix": 1790148157.385045
+}

@@ -1,0 +1,28 @@
+[
+  {
+    "model": "Nemotron-3-Nano-4B",
+    "position": -1,
+    "method": "int8_head_affine",
+    "n": 4,
+    "kl_mean": 0.25181181728839874,
+    "kl_median": 0.2428891360759735,
+    "kl_p90": 0.4548559784889221,
+    "kl_p99": 0.4548559784889221,
+    "kl_max": 0.4548559784889221,
+    "top1_agreement": 0.75,
+    "state_rel_fro_squared_mean": 0.0016540951952005603
+  },
+  {
+    "model": "Nemotron-3-Nano-4B",
+    "position": 256,
+    "method": "int8_head_affine",
+    "n": 4,
+    "kl_mean": 0.06009537260979414,
+    "kl_median": 0.039054904133081436,
+    "kl_p90": 0.13766077160835266,
+    "kl_p99": 0.13766077160835266,
+    "kl_max": 0.13766077160835266,
+    "top1_agreement": 1.0,
+    "state_rel_fro_squared_mean": 0.0016987876304137032
+  }
+]

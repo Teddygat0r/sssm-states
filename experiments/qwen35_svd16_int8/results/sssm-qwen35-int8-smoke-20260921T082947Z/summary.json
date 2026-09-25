@@ -1,0 +1,42 @@
+{
+  "all": {
+    "uncompressed": {
+      "nll": 0.6468392610549927,
+      "kl_from_uncompressed": 0.0,
+      "top1_agreement": 1.0,
+      "perplexity": 1.9094958628274734
+    },
+    "svd16": {
+      "nll": 0.6082859635353088,
+      "kl_from_uncompressed": 0.0011010956950485706,
+      "top1_agreement": 1.0,
+      "perplexity": 1.8372795342304102
+    },
+    "svd16_int8": {
+      "nll": 0.5542008280754089,
+      "kl_from_uncompressed": 0.004776910878717899,
+      "top1_agreement": 1.0,
+      "perplexity": 1.74054943056434
+    }
+  },
+  "chat": {
+    "uncompressed": {
+      "nll": 0.6468392610549927,
+      "kl_from_uncompressed": 0.0,
+      "top1_agreement": 1.0,
+      "perplexity": 1.9094958628274734
+    },
+    "svd16": {
+      "nll": 0.6082859635353088,
+      "kl_from_uncompressed": 0.0011010956950485706,
+      "top1_agreement": 1.0,
+      "perplexity": 1.8372795342304102
+    },
+    "svd16_int8": {
+      "nll": 0.5542008280754089,
+      "kl_from_uncompressed": 0.004776910878717899,
+      "top1_agreement": 1.0,
+      "perplexity": 1.74054943056434
+    }
+  }
+}

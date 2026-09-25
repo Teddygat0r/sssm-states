@@ -1,0 +1,30 @@
+{
+  "models": [
+    "deltanet",
+    "gated_deltanet",
+    "qwen35",
+    "mamba2",
+    "nemotron"
+  ],
+  "methods": [
+    "int8_layer_affine",
+    "svd16"
+  ],
+  "prompts_per_kind": 100,
+  "positions": [
+    256,
+    "full"
+  ],
+  "gen_tokens": 128,
+  "every": 4,
+  "expected_measurements_per_model_method_position": 6400,
+  "paired": true,
+  "estimated_hours": [
+    6,
+    10
+  ],
+  "code_sha256": {
+    "worker.py": "055b832c57dbc699f3e61f10f7f015b69ec21ec4778929f957697af044cb6bf0",
+    "suite.py": "f53ab1a0383496e6f86dab8a5f36c57669f2b112a26fd35a8045731bb8835d92"
+  }
+}

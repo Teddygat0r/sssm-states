@@ -1,0 +1,28 @@
+[
+  {
+    "model": "DeltaNet-1.3B",
+    "position": -1,
+    "method": "int8_head_affine",
+    "n": 6400,
+    "kl_mean": 0.026073838160589745,
+    "kl_median": 0.0037197014316916466,
+    "kl_p90": 0.05652664229273796,
+    "kl_p99": 0.40185022354125977,
+    "kl_max": 2.8144960403442383,
+    "top1_agreement": 0.96515625,
+    "state_rel_fro_squared_mean": 0.006352301874339169
+  },
+  {
+    "model": "DeltaNet-1.3B",
+    "position": 256,
+    "method": "int8_head_affine",
+    "n": 6400,
+    "kl_mean": 0.10413489385281646,
+    "kl_median": 0.015342440456151962,
+    "kl_p90": 0.26360219717025757,
+    "kl_p99": 1.3130625486373901,
+    "kl_max": 4.24926233291626,
+    "top1_agreement": 0.94,
+    "state_rel_fro_squared_mean": 0.00703741349934415
+  }
+]

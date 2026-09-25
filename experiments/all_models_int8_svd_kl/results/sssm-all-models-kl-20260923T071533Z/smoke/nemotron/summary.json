@@ -1,0 +1,54 @@
+[
+  {
+    "model": "Nemotron-3-Nano-4B",
+    "position": -1,
+    "method": "int8_layer_affine",
+    "n": 4,
+    "kl_mean": 0.5009558612946421,
+    "kl_median": 0.33822256326675415,
+    "kl_p90": 1.003242015838623,
+    "kl_p99": 1.003242015838623,
+    "kl_max": 1.003242015838623,
+    "top1_agreement": 0.75,
+    "state_rel_fro_squared_mean": 0.5755931612636361
+  },
+  {
+    "model": "Nemotron-3-Nano-4B",
+    "position": -1,
+    "method": "svd16",
+    "n": 4,
+    "kl_mean": 0.000849625746923266,
+    "kl_median": 0.0009656520560383797,
+    "kl_p90": 0.0013402518816292286,
+    "kl_p99": 0.0013402518816292286,
+    "kl_max": 0.0013402518816292286,
+    "top1_agreement": 1.0,
+    "state_rel_fro_squared_mean": 0.0003859889176156786
+  },
+  {
+    "model": "Nemotron-3-Nano-4B",
+    "position": 256,
+    "method": "int8_layer_affine",
+    "n": 4,
+    "kl_mean": 0.9329787380993366,
+    "kl_median": 0.21066497266292572,
+    "kl_p90": 2.924076795578003,
+    "kl_p99": 2.924076795578003,
+    "kl_max": 2.924076795578003,
+    "top1_agreement": 0.75,
+    "state_rel_fro_squared_mean": 0.5921549541609628
+  },
+  {
+    "model": "Nemotron-3-Nano-4B",
+    "position": 256,
+    "method": "svd16",
+    "n": 4,
+    "kl_mean": 0.0008091856711871515,
+    "kl_median": 4.3051237298641354e-05,
+    "kl_p90": 0.0024332869797945023,
+    "kl_p99": 0.0024332869797945023,
+    "kl_max": 0.0024332869797945023,
+    "top1_agreement": 1.0,
+    "state_rel_fro_squared_mean": 0.00036139395235786363
+  }
+]

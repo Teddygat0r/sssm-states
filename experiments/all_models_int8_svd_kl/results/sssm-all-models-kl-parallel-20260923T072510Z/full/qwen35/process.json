@@ -1,0 +1,14 @@
+{
+  "pid": 1851168,
+  "started_unix": 1790148397.749027,
+  "command": [
+    "/home/joshuaz/sssm-states/.venv/bin/python",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/worker.py",
+    "--model",
+    "qwen35",
+    "--prompts",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-parallel-20260923T072510Z/prompts.json",
+    "--output",
+    "/home/joshuaz/sssm-states/experiments/all_models_int8_svd_kl/results/sssm-all-models-kl-parallel-20260923T072510Z/full/qwen35"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "uncompressed": {
+    "n": 1319,
+    "strict_accuracy": 0.8544351781652767,
+    "flexible_accuracy": 0.8544351781652767,
+    "truncated": 16
+  },
+  "int8_state": {
+    "n": 1319,
+    "strict_accuracy": 0.7520849128127369,
+    "flexible_accuracy": 0.7263078089461713,
+    "truncated": 165
+  }
+}
